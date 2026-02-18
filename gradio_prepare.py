@@ -170,11 +170,11 @@ def _steps_to_t_index_list(steps: int) -> list[int]:
 
 
 def ui_to_config(
-    model_id, w, h, cfg_type, tiny_vae, scheduler,
+    model_id, w, h, cfg_type, scheduler,
     lora0_id, lora0_scale, lora1_id, lora1_scale, lora2_id, lora2_scale,
     cn0_id, cn1_id, cn2_id,
     use_ip, ip_path, ip_enc, ip_tokens, ip_type,
-    cached_attn, cache_frames, safety,
+    cached_attn, cache_frames,
     denoise_steps,
 ):
     base = "engines"
@@ -192,7 +192,7 @@ def ui_to_config(
         "mode": "img2img",
         "width": int(w), "height": int(h),
         "cfg_type": cfg_type,
-        "use_tiny_vae": bool(tiny_vae),
+        "use_tiny_vae": True,
         "frame_buffer_size": 1,
         "consistency_lora": scheduler,        # lcm/tcd/none — что выбрал пользователь
         "scheduler_locked": scheduler_locked,  # True = LoRA запечена, scheduler менять нельзя
@@ -202,7 +202,7 @@ def ui_to_config(
         "min_batch_size": batch, "max_batch_size": batch,
         "use_cached_attn": bool(cached_attn),
         "cache_maxframes": int(cache_frames),
-        "use_safety_checker": bool(safety),
+        "use_safety_checker": False,
         "prompt": rt["prompt"], "negative_prompt": rt["negative_prompt"],
         "guidance_scale": rt["guidance_scale"], "delta": rt["delta"],
         "num_inference_steps": 50, "seed": rt["seed"],
@@ -271,12 +271,12 @@ def do_build(*args, progress=gr.Progress()):
 
         # ── 1. Сборка TRT engines ──────────────────────────────
         cfg["compile_engines_only"] = True
-        progress(0.1, desc="Сборка TRT engines...")
+        progress(0.1, desc="Building TRT engines...")
         from streamdiffusion.config import create_wrapper_from_config, save_config
         import contextlib, torch
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             build_wrapper = create_wrapper_from_config(cfg)
-        # Освобождаем VRAM после компиляции
+        # Free VRAM after compilation
         del build_wrapper
         torch.cuda.empty_cache()
 
@@ -286,7 +286,7 @@ def do_build(*args, progress=gr.Progress()):
         build_log = buf.getvalue()
 
         # ── 2. Тестовый инференс ────────────────────────────────
-        progress(0.8, desc="Тестовый инференс...")
+        progress(0.8, desc="Test inference...")
         from PIL import Image
         test_cfg = dict(cfg)
         test_cfg["compile_engines_only"] = False
@@ -303,21 +303,21 @@ def do_build(*args, progress=gr.Progress()):
             guidance_scale=cfg.get("guidance_scale", 1.2),
             delta=cfg.get("delta", 1.0),
         )
-        # Прогрев: заполняем denoising batch
+        # Warmup: fill denoising batch
         for _ in range(wrapper.stream.batch_size):
             wrapper.img2img(black)
         result = wrapper.img2img(black)
         if isinstance(result, Image.Image):
-            test_status = f"✓ Тест OK — {result.size[0]}×{result.size[1]}"
+            test_status = f"✓ Test OK — {result.size[0]}×{result.size[1]}"
         elif isinstance(result, torch.Tensor):
-            test_status = f"✓ Тест OK — tensor {tuple(result.shape)}"
+            test_status = f"✓ Test OK — tensor {tuple(result.shape)}"
         else:
-            test_status = f"✓ Тест OK — {type(result).__name__}"
+            test_status = f"✓ Test OK — {type(result).__name__}"
         del wrapper
         torch.cuda.empty_cache()
 
-        progress(1.0, desc="Готово")
-        return build_log + "\n" + test_status + f"\n✓ Config: {config_path}\n✓ Готово."
+        progress(1.0, desc="Done")
+        return build_log + "\n" + test_status + f"\n✓ Config: {config_path}\n✓ Done."
     except Exception:
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
 
@@ -343,30 +343,25 @@ def build_app():
                             gr.Markdown("**Sampling**", elem_classes=["sec-title"])
                             denoise_steps = gr.Slider(
                                 1, 8, 4, step=1,
-                                label="Шаги денойза",
-                                info="1=turbo, 4=по умолчанию (как Steps в ComfyUI)",
+                                label="Denoise steps",
+                                info="1=turbo, 4=default (like Steps in ComfyUI)",
                             )
                             scheduler = gr.Radio(
                                 ["lcm", "tcd", "none"], value="lcm", label="Consistency LoRA",
-                                info="lcm/tcd — LoRA запекается; none — без LoRA (turbo, distilled)",
+                                info="lcm/tcd — LoRA baked in; none — no LoRA (turbo, distilled)",
                             )
                             with gr.Row(elem_classes=["compact"]):
                                 cfg_type = gr.Dropdown(
                                     ["none", "self", "full", "initialize"],
                                     value="none", label="CFG type",
-                                    info="запекается (batch structure)",
+                                    info="baked (batch structure)",
                                 )
 
                         with gr.Group():
                             gr.Markdown("**Resolution**", elem_classes=["sec-title"])
                             with gr.Row(elem_classes=["compact"]):
-                                width = gr.Slider(256, 1024, 512, step=64, label="W")
-                                height = gr.Slider(256, 1024, 512, step=64, label="H")
-                            with gr.Row(elem_classes=["compact"]):
-                                use_tiny_vae = gr.Checkbox(True, label="Tiny VAE")
-                                cached_attn = gr.Checkbox(False, label="Cached attn")
-                                safety = gr.Checkbox(False, label="Safety")
-                            cache_frames = gr.Slider(1, 16, 1, step=1, label="Cache max frames")
+                                width = gr.Slider(256, 1024, 512, step=64, label="Width")
+                                height = gr.Slider(256, 1024, 512, step=64, label="Height")
 
                         with gr.Group():
                             gr.Markdown("**LoRA** *(style, baked into engine)*", elem_classes=["sec-title"])
@@ -411,9 +406,14 @@ def build_app():
                                 ip_tokens = gr.Dropdown(
                                     [4, 16], value=4,
                                     label="Reference detail",
-                                    info="4 = базовая детализация, 16 = высокая (сильнее перенос стиля). Фиксируется при сборке движка.",
+                                    info="4 = base detail, 16 = high (stronger style transfer). Fixed at engine build.",
                                 )
                                 ip_type = gr.Radio(["regular", "faceid"], value="regular", label="Type")
+
+                        with gr.Group():
+                            gr.Markdown("**Cached attention**", elem_classes=["sec-title"])
+                            cached_attn = gr.Checkbox(False, label="Cached attn")
+                            cache_frames = gr.Slider(1, 16, 1, step=1, label="Cache max frames")
 
                     # ╔════════════════════ THIRD COLUMN: Output ═══════════════════╗
                     with gr.Column(scale=1):
@@ -422,39 +422,39 @@ def build_app():
                             config_name = gr.Textbox(
                                 "",
                                 label="Config filename",
-                                placeholder="config_lcm_4steps_none_512x512 (пусто = автоген)",
-                                info="Без .yaml — добавится автоматически",
+                                placeholder="config_lcm_4steps_none_512x512 (empty = auto)",
+                                info=".yaml is added automatically",
                             )
                             btn_build = gr.Button("Build", variant="primary", elem_classes=["act-btn"])
                             log = gr.Textbox(label="Log", lines=8, max_lines=24, interactive=False, elem_classes=["log"])
 
                 all_fields = [
-                    model_id, width, height, cfg_type, use_tiny_vae, scheduler,
+                    model_id, width, height, cfg_type, scheduler,
                     lora0_id, lora0_scale, lora1_id, lora1_scale, lora2_id, lora2_scale,
                     cn0_id, cn1_id, cn2_id,
                     use_ipadapter, ip_path, ip_enc, ip_tokens, ip_type,
-                    cached_attn, cache_frames, safety,
+                    cached_attn, cache_frames,
                     denoise_steps,
                     config_name,
                 ]
                 btn_build.click(fn=do_build, inputs=all_fields, outputs=[log])
 
-            with gr.Tab("flux klein"):
-                gr.Markdown("*(в разработке)*")
+            with gr.Tab("Flux Klein"):
+                gr.Markdown("*(in development)*")
 
-            with gr.Tab("depthanything"):
-                gr.Markdown("*(в разработке)*")
+            with gr.Tab("DepthAnything"):
+                gr.Markdown("*(in development)*")
 
-            with gr.Tab("yolo"):
-                gr.Markdown("*(в разработке)*")
+            with gr.Tab("YOLO"):
+                gr.Markdown("*(in development)*")
 
-            with gr.Tab("settings"):
-                gr.Markdown("*(в разработке)*")
+            with gr.Tab("Settings"):
+                gr.Markdown("*(in development)*")
 
     return app
 
 
-# Должно быть на уровне модуля для `gradio gradio_prepare.py` (reload mode)
+# Must be at module level for `gradio gradio_prepare.py` (reload mode)
 demo = build_app()
 
 if __name__ == "__main__":

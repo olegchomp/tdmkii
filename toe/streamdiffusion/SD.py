@@ -258,6 +258,13 @@ class sdExt:
 		except Exception:
 			pass
 
+	def update_safety_checker(self, enabled: bool):
+		if self.stream is not None:
+			try:
+				self.stream.update_stream_params(use_safety_checker=enabled)
+			except Exception:
+				pass
+
 	def update_denoise(self, strength: float):
 		"""Пересчёт t_index_list из float 0‑1.
 		0 = оригинал (индексы у конца), 1 = макс. денойз (индексы от начала)."""
@@ -321,6 +328,8 @@ class sdExt:
 			self.update_ipadapter_enabled(bool(par.val))
 		elif name == "Ipadapterweight":
 			self.update_ipadapter_scale(float(par.val))
+		elif name == "Safety":
+			self.update_safety_checker(bool(par.val))
 
 	# ── Utils ────────────────────────────────────────────────
 
