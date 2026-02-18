@@ -14,6 +14,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 STREAMDIFFUSION_SRC = REPO_ROOT / "StreamDiffusion" / "src"
+# Vendored diffusers_ipadapter (with PyTorch 2.6+ weights_only=False) must be found first
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(STREAMDIFFUSION_SRC) not in sys.path:
     sys.path.insert(0, str(STREAMDIFFUSION_SRC))
 
@@ -120,18 +123,20 @@ def _model_tier(model_id: str) -> str:
 # IP-Adapter: дефолтные варианты (HF); юзер может вписать свой путь
 IP_ADAPTER_CHOICES = [
     ("SD 1.5 — base", "h94/IP-Adapter/models/ip-adapter_sd15.safetensors"),
-    ("SD 1.5 — plus (детальнее)", "h94/IP-Adapter/models/ip-adapter-plus_sd15.safetensors"),
-    ("SD 1.5 — light (больше текста)", "h94/IP-Adapter/models/ip-adapter_sd15_light.safetensors"),
+    ("SD 1.5 — plus", "h94/IP-Adapter/models/ip-adapter-plus_sd15.safetensors"),
+    ("SD 1.5 — light", "h94/IP-Adapter/models/ip-adapter_sd15_light.safetensors"),
     ("SD 1.5 — plus face", "h94/IP-Adapter/models/ip-adapter-plus-face_sd15.safetensors"),
     ("SDXL — base (ViT-bigG)", "h94/IP-Adapter/sdxl_models/ip-adapter_sdxl.safetensors"),
     ("SDXL — ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter_sdxl_vit-h.safetensors"),
     ("SDXL — plus ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors"),
     ("SDXL — plus face ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors"),
 ]
+_IP_ADAPTER_MAP = {label: val for label, val in IP_ADAPTER_CHOICES}
 IP_ENCODER_CHOICES = [
     ("SD 1.5 (OpenCLIP-ViT-H-14)", "h94/IP-Adapter/models/image_encoder"),
     ("SDXL (OpenCLIP-ViT-bigG-14)", "h94/IP-Adapter/sdxl_models/image_encoder"),
 ]
+_IP_ENCODER_MAP = {label: val for label, val in IP_ENCODER_CHOICES}
 
 # Runtime-параметры — хардкод в config.yaml (меняются в инференс-скрипте)
 RUNTIME_DEFAULTS = {
@@ -233,11 +238,13 @@ def ui_to_config(
         }
         for mid in active
     ]
-    if use_ip and ip_path and ip_path.strip() and ip_enc and ip_enc.strip():
+    resolved_ip = _IP_ADAPTER_MAP.get(ip_path, ip_path or "").strip()
+    resolved_enc = _IP_ENCODER_MAP.get(ip_enc, ip_enc or "").strip()
+    if use_ip and resolved_ip and resolved_enc:
         cfg["use_ipadapter"] = True
         cfg["ipadapters"] = [{
-            "ipadapter_model_path": ip_path.strip(),
-            "image_encoder_path": ip_enc.strip(),
+            "ipadapter_model_path": resolved_ip,
+            "image_encoder_path": resolved_enc,
             "scale": rt["ipadapter_scale"],
             "num_image_tokens": int(ip_tokens),
             "type": ip_type, "enabled": True,

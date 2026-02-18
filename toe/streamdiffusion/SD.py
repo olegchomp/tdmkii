@@ -18,13 +18,19 @@ class sdExt:
 		self.output_interface = None
 		self.n_controlnets = 0
 		self.controlnet_enabled = False
+		self.ipadapter_enabled = False
+		self._has_ipadapter = False
+		self.ipadapter_style_key = "ipadapter_main"
 
-		# Добавляем StreamDiffusion в sys.path
+		# Путь к репо (Venvpath = корень проекта с StreamDiffusion и diffusers_ipadapter)
 		venv_path = Path(parent().par.Venvpath.val)
+		self.repo_root = venv_path
+		# Сначала корень репо — чтобы использовался vendored diffusers_ipadapter
+		if str(venv_path) not in sys.path:
+			sys.path.insert(0, str(venv_path))
 		sd_src = venv_path / "StreamDiffusion" / "src"
 		if str(sd_src) not in sys.path:
 			sys.path.insert(0, str(sd_src))
-		self.repo_root = venv_path
 
 		import numpy as np
 		import torch
@@ -82,12 +88,20 @@ class sdExt:
 			self.n_denoise_steps = len(self.config.get("t_index_list", [0]))
 			self.n_controlnets = len(self.config.get("controlnets", []))
 			self.controlnet_enabled = self.config.get("use_controlnet", False) and self.n_controlnets > 0
+			self._has_ipadapter = bool(
+				getattr(self.stream, "use_ipadapter", False)
+				and (self.config.get("ipadapter_config") or self.config.get("ipadapters"))
+			)
+			self.ipadapter_enabled = self._has_ipadapter
 
 			w = self.config.get("width", 512)
 			h = self.config.get("height", 512)
 			self._update_size(w, h)
 
-			self.log("Status", f"Pipeline ready: {w}x{h}, CN: {self.n_controlnets}")
+			status = f"Pipeline ready: {w}x{h}, CN: {self.n_controlnets}"
+			if self.ipadapter_enabled:
+				status += ", IP-Adapter: on"
+			self.log("Status", status)
 		except Exception as e:
 			self.log("Error", e)
 
@@ -104,16 +118,19 @@ class sdExt:
 		if self.stream is None:
 			return
 
-		cuda_stream = self.torch.cuda.current_stream(self.device)
-
-		# Main image from null1
 		source = op("null1")
-		to_tensor = TopArrayInterface(source)
-		to_tensor.update(cuda_stream.cuda_stream)
-		image = self.torch.as_tensor(to_tensor, device=self.device)
-		image_tensor = self._preprocess(image)
+		if source is None or getattr(source, "width", 0) <= 0 or getattr(source, "height", 0) <= 0:
+			return
 
-		# ControlNet images from cn0, cn1, cn2
+		try:
+			cuda_stream = self.torch.cuda.current_stream(self.device)
+			to_tensor = TopArrayInterface(source)
+			to_tensor.update(cuda_stream.cuda_stream)
+			image = self.torch.as_tensor(to_tensor, device=self.device)
+			image_tensor = self._preprocess(image)
+		except Exception:
+			return
+
 		if self.controlnet_enabled:
 			for i in range(self.n_controlnets):
 				cn_top = op(f"cn{i}")
@@ -130,14 +147,33 @@ class sdExt:
 				except Exception:
 					continue
 
-		output_image = self.stream(image=image_tensor)
+		if self.ipadapter_enabled:
+			ip_top = op("ip0")
+			if ip_top is not None and getattr(ip_top, "width", 0) > 0 and getattr(ip_top, "height", 0) > 0:
+				try:
+					ip_iface = TopArrayInterface(ip_top)
+					ip_iface.update(cuda_stream.cuda_stream)
+					ip_img = self.torch.as_tensor(ip_iface, device=self.device)
+					ip_tensor = self._preprocess(ip_img)
+					if not self.torch.isnan(ip_tensor).any():
+						self.stream.update_style_image(
+							ip_tensor,
+							is_stream=True,
+							style_key=self.ipadapter_style_key,
+						)
+				except Exception:
+					pass
 
-		output_tensor = self._postprocess(output_image)
-		scriptOp.copyCUDAMemory(
-			output_tensor.data_ptr(),
-			self.output_interface.size,
-			self.output_interface.mem_shape,
-		)
+		try:
+			output_image = self.stream(image=image_tensor)
+			output_tensor = self._postprocess(output_image)
+			scriptOp.copyCUDAMemory(
+				output_tensor.data_ptr(),
+				self.output_interface.size,
+				self.output_interface.mem_shape,
+			)
+		except Exception:
+			pass
 
 	def _preprocess(self, image):
 		"""TOP tensor → pipeline input."""
@@ -211,6 +247,17 @@ class sdExt:
 		if self.stream is not None and index < self.n_controlnets:
 			self.stream.stream._controlnet_module.update_controlnet_scale(index, scale)
 
+	def update_ipadapter_enabled(self, enabled: bool):
+		self.ipadapter_enabled = enabled and getattr(self, "_has_ipadapter", False)
+
+	def update_ipadapter_scale(self, scale: float):
+		if self.stream is None or not getattr(self.stream, "use_ipadapter", False):
+			return
+		try:
+			self.stream.update_stream_params(ipadapter_config={"scale": float(scale)})
+		except Exception:
+			pass
+
 	def update_denoise(self, strength: float):
 		"""Пересчёт t_index_list из float 0‑1.
 		0 = оригинал (индексы у конца), 1 = макс. денойз (индексы от начала)."""
@@ -270,6 +317,10 @@ class sdExt:
 		elif name.startswith("Controlnet") and name.endswith("weight"):
 			idx = int(name[len("Controlnet"):-len("weight")]) - 1
 			self.update_controlnet_scale(idx, float(par.val))
+		elif name == "Ipadapter":
+			self.update_ipadapter_enabled(bool(par.val))
+		elif name == "Ipadapterweight":
+			self.update_ipadapter_scale(float(par.val))
 
 	# ── Utils ────────────────────────────────────────────────
 

@@ -1545,10 +1545,10 @@ class StreamDiffusionWrapper:
                         logger.error("Try reducing batch size, using smaller models, or increasing GPU memory")
                         raise RuntimeError("Insufficient VRAM for IPAdapter installation. Consider using a GPU with more memory or reducing model complexity.")
                         
-                    except Exception:
+                    except Exception as e:
                         import traceback
                         traceback.print_exc()
-                        logger.error("Failed to install IPAdapterModule before TensorRT compilation")
+                        logger.error(f"Failed to install IPAdapterModule before TensorRT compilation: {type(e).__name__}: {e}")
                         raise
 
                 # NOTE: When IPAdapter is enabled, we must pass num_ip_layers. We cannot know it until after

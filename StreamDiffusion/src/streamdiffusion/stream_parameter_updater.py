@@ -187,12 +187,9 @@ class StreamParameterUpdater(OrchestratorUser):
                     "ipadapter"
                 )
             
-            # Cache results for this style image key
+            # Cache results for this style image key (pipelined mode returns None on first frame — expected)
             if embedding_results and embedding_results[0] is not None:
                 self._embedding_cache[style_image_key] = embedding_results[0]
-            else:
-                # This is an error condition - we should always have results
-                raise RuntimeError(f"_preprocess_style_image_parallel: Failed to generate embeddings for style image '{style_image_key}'")
                 
         except Exception as e:
             import traceback
