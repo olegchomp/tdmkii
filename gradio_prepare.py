@@ -1,0 +1,454 @@
+"""
+Gradio UI for StreamDiffusion model preparation.
+Builds TRT engines and saves YAML config. Inference is handled by a separate script.
+engines/<model_name>/ — движки и config.yaml
+"""
+from __future__ import annotations
+
+import io
+import json
+import re
+import sys
+import traceback
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+STREAMDIFFUSION_SRC = REPO_ROOT / "StreamDiffusion" / "src"
+if str(STREAMDIFFUSION_SRC) not in sys.path:
+    sys.path.insert(0, str(STREAMDIFFUSION_SRC))
+
+import gradio as gr
+
+DEFAULT_MODELS = [
+    "stabilityai/sd-turbo",
+    "stabilityai/sdxl-turbo",
+    "KBlueLeaf/kohaku-v2.1",
+    "runwayml/stable-diffusion-v1-5",
+    "stabilityai/stable-diffusion-xl-base-1.0",
+]
+
+
+CSS = """
+.compact{gap:6px!important}
+.act-btn{min-height:40px!important;font-weight:600!important}
+.log textarea{font-family:Consolas,'Courier New',monospace!important;font-size:.82em!important}
+footer{visibility:hidden!important}
+.sec-title{padding:6px 0 4px 6px!important}
+/* hide scrollbars on string/text fields */
+textarea, input[type="text"]{scrollbar-width:none!important;-ms-overflow-style:none!important}
+textarea::-webkit-scrollbar, input[type="text"]::-webkit-scrollbar{display:none!important}
+"""
+
+THEME = gr.themes.Base(
+    primary_hue=gr.themes.colors.orange,
+    secondary_hue=gr.themes.colors.gray,
+    neutral_hue=gr.themes.colors.gray,
+    font=gr.themes.GoogleFont("Inter"),
+).set(
+    body_background_fill="#0b0f19",
+    body_background_fill_dark="#0b0f19",
+    block_background_fill="#1a1c2e",
+    block_background_fill_dark="#1a1c2e",
+    block_border_color="#2e3045",
+    block_border_color_dark="#2e3045",
+    block_label_text_color="#c5c7d5",
+    block_label_text_color_dark="#c5c7d5",
+    block_title_text_color="#e5e7eb",
+    block_title_text_color_dark="#e5e7eb",
+    body_text_color="#c5c7d5",
+    body_text_color_dark="#c5c7d5",
+    input_background_fill="#111322",
+    input_background_fill_dark="#111322",
+    input_border_color="#2e3045",
+    input_border_color_dark="#2e3045",
+    button_primary_background_fill="#f59e0b",
+    button_primary_background_fill_dark="#f59e0b",
+    button_primary_text_color="#000",
+    button_primary_text_color_dark="#000",
+    button_secondary_background_fill="#2e3045",
+    button_secondary_background_fill_dark="#2e3045",
+    button_secondary_text_color="#c5c7d5",
+    button_secondary_text_color_dark="#c5c7d5",
+    slider_color="#f59e0b",
+    slider_color_dark="#f59e0b",
+    checkbox_background_color="#111322",
+    checkbox_background_color_dark="#111322",
+    checkbox_border_color="#2e3045",
+    checkbox_border_color_dark="#2e3045",
+)
+
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _model_slug(model_id: str) -> str:
+    """Преобразует model_id в имя папки: stabilityai/sd-turbo -> stabilityai_sd-turbo"""
+    mid = (model_id or "stabilityai/sd-turbo").strip()
+    slug = mid.replace("/", "_").replace("\\", "_")
+    return re.sub(r"[^\w\-.]", "_", slug) or "model"
+
+
+def _config_name(cfg: dict) -> str:
+    """Уникальное имя конфига из ключевых запекаемых параметров.
+    Пример: config_lcm_4steps_self_512x512.yaml
+    """
+    parts = [
+        "config",
+        cfg.get("consistency_lora", "lcm"),
+        f"{len(cfg.get('t_index_list', [4]))}steps",
+        cfg.get("cfg_type", "self"),
+        f"{cfg.get('width', 512)}x{cfg.get('height', 512)}",
+    ]
+    return "_".join(parts) + ".yaml"
+
+
+# Consistency LoRA по модели и scheduler (вшиваются в engine — переключить нельзя)
+LCM_LORA = {"sd15": "latent-consistency/lcm-lora-sdv1-5", "sdxl": "latent-consistency/lcm-lora-sdxl"}
+TCD_LORA = {"sd15": "h1t/TCD-SD15-LoRA", "sd21": "h1t/TCD-SD21-base-LoRA", "sdxl": "h1t/TCD-SDXL-LoRA"}
+
+
+def _model_tier(model_id: str) -> str:
+    """sd15 / sd21 / sdxl по model_id."""
+    mid = (model_id or "").lower()
+    if "sdxl" in mid or "xl-base" in mid:
+        return "sdxl"
+    if "2.1" in mid or "sd21" in mid or "sd2.1" in mid:
+        return "sd21"
+    return "sd15"
+
+
+
+# IP-Adapter: дефолтные варианты (HF); юзер может вписать свой путь
+IP_ADAPTER_CHOICES = [
+    ("SD 1.5 — base", "h94/IP-Adapter/models/ip-adapter_sd15.safetensors"),
+    ("SD 1.5 — plus (детальнее)", "h94/IP-Adapter/models/ip-adapter-plus_sd15.safetensors"),
+    ("SD 1.5 — light (больше текста)", "h94/IP-Adapter/models/ip-adapter_sd15_light.safetensors"),
+    ("SD 1.5 — plus face", "h94/IP-Adapter/models/ip-adapter-plus-face_sd15.safetensors"),
+    ("SDXL — base (ViT-bigG)", "h94/IP-Adapter/sdxl_models/ip-adapter_sdxl.safetensors"),
+    ("SDXL — ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter_sdxl_vit-h.safetensors"),
+    ("SDXL — plus ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors"),
+    ("SDXL — plus face ViT-H", "h94/IP-Adapter/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors"),
+]
+IP_ENCODER_CHOICES = [
+    ("SD 1.5 (OpenCLIP-ViT-H-14)", "h94/IP-Adapter/models/image_encoder"),
+    ("SDXL (OpenCLIP-ViT-bigG-14)", "h94/IP-Adapter/sdxl_models/image_encoder"),
+]
+
+# Runtime-параметры — хардкод в config.yaml (меняются в инференс-скрипте)
+RUNTIME_DEFAULTS = {
+    "sampler": "normal",
+    "guidance_scale": 1.2,
+    "delta": 0.7,
+    "prompt": "",
+    "negative_prompt": "blurry, low quality",
+    "seed": 2,
+    "conditioning_scale": 1.0,  # ControlNet
+    "ipadapter_scale": 0.7,
+}
+
+# Пресеты t_index по числу шагов (img2img: от частично зашумлённого входа)
+DENOISE_PRESETS = {
+    1: [45],
+    2: [35, 45],
+    3: [22, 32, 45],
+    4: [16, 28, 38, 45],
+    5: [18, 25, 32, 38, 45],
+    6: [20, 25, 30, 35, 40, 45],
+    7: [20, 24, 28, 32, 36, 40, 45],
+    8: [20, 23, 27, 30, 34, 37, 41, 45],
+}
+
+
+def _steps_to_t_index_list(steps: int) -> list[int]:
+    """Число шагов → t_index_list (как Steps в ComfyUI)."""
+    steps = max(1, min(8, int(steps)))
+    return DENOISE_PRESETS[steps]
+
+
+def ui_to_config(
+    model_id, w, h, cfg_type, tiny_vae, scheduler,
+    lora0_id, lora0_scale, lora1_id, lora1_scale, lora2_id, lora2_scale,
+    cn0_id, cn1_id, cn2_id,
+    use_ip, ip_path, ip_enc, ip_tokens, ip_type,
+    cached_attn, cache_frames, safety,
+    denoise_steps,
+):
+    base = "engines"
+    slug = _model_slug(model_id)
+    engine_dir = f"{base}/{slug}"
+
+    t_index_list = _steps_to_t_index_list(int(denoise_steps))
+    batch = len(t_index_list)  # frame_buffer_size=1, min=max=batch
+
+    rt = RUNTIME_DEFAULTS
+    cfg_scheduler = "lcm" if scheduler == "none" else scheduler
+    scheduler_locked = scheduler != "none"
+    cfg = {
+        "model_id": model_id or "stabilityai/sd-turbo",
+        "mode": "img2img",
+        "width": int(w), "height": int(h),
+        "cfg_type": cfg_type,
+        "use_tiny_vae": bool(tiny_vae),
+        "frame_buffer_size": 1,
+        "consistency_lora": scheduler,        # lcm/tcd/none — что выбрал пользователь
+        "scheduler_locked": scheduler_locked,  # True = LoRA запечена, scheduler менять нельзя
+        "scheduler": cfg_scheduler, "sampler": rt["sampler"],
+        "device": "cuda", "dtype": "float16", "acceleration": "tensorrt",
+        "engine_dir": engine_dir,
+        "min_batch_size": batch, "max_batch_size": batch,
+        "use_cached_attn": bool(cached_attn),
+        "cache_maxframes": int(cache_frames),
+        "use_safety_checker": bool(safety),
+        "prompt": rt["prompt"], "negative_prompt": rt["negative_prompt"],
+        "guidance_scale": rt["guidance_scale"], "delta": rt["delta"],
+        "num_inference_steps": 50, "seed": rt["seed"],
+        "t_index_list": t_index_list,
+    }
+    # Build lora_dict: style LoRAs from UI slots + consistency LoRA from scheduler
+    ld = {}
+    for lid, lsc in [(lora0_id, lora0_scale), (lora1_id, lora1_scale), (lora2_id, lora2_scale)]:
+        name = str(lid).strip() if lid else ""
+        if name:
+            ld[name] = float(lsc) if lsc is not None else 1.0
+    # Add consistency LoRA (invisible to user)
+    if scheduler != "none":
+        tier = _model_tier(model_id)
+        if scheduler == "tcd":
+            ld[TCD_LORA.get(tier, TCD_LORA["sd15"])] = 1.0
+        else:
+            ld[LCM_LORA.get(tier, LCM_LORA["sd15"])] = 1.0
+    if ld:
+        cfg["lora_dict"] = ld
+    ids = [cn0_id, cn1_id, cn2_id]
+    active = [str(mid).strip() for mid in ids if mid and str(mid).strip()]
+    cn_count = len(active)
+    use_controlnet = cn_count > 0
+    cfg["use_controlnet"] = use_controlnet
+    cfg["controlnets"] = [
+        {
+            "model_id": mid,
+            "conditioning_scale": rt["conditioning_scale"],
+            "preprocessor": "passthrough",
+            "conditioning_channels": 3,
+            "enabled": True,
+        }
+        for mid in active
+    ]
+    if use_ip and ip_path and ip_path.strip() and ip_enc and ip_enc.strip():
+        cfg["use_ipadapter"] = True
+        cfg["ipadapters"] = [{
+            "ipadapter_model_path": ip_path.strip(),
+            "image_encoder_path": ip_enc.strip(),
+            "scale": rt["ipadapter_scale"],
+            "num_image_tokens": int(ip_tokens),
+            "type": ip_type, "enabled": True,
+        }]
+    else:
+        cfg["use_ipadapter"] = False
+    return cfg
+
+
+def _sanitize_config_name(name: str) -> str:
+    """Очистить имя файла: только буквы, цифры, дефис, подчёркивание."""
+    s = str(name).strip()
+    if not s:
+        return ""
+    s = re.sub(r"[^\w\-.]", "_", s)
+    return s + ".yaml" if not s.lower().endswith(".yaml") else s
+
+
+def do_build(*args, progress=gr.Progress()):
+    buf = io.StringIO()
+    try:
+        config_name_input = args[-1]
+        cfg = ui_to_config(*args[:-1])
+
+        # ── 1. Сборка TRT engines ──────────────────────────────
+        cfg["compile_engines_only"] = True
+        progress(0.1, desc="Сборка TRT engines...")
+        from streamdiffusion.config import create_wrapper_from_config, save_config
+        import contextlib, torch
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            build_wrapper = create_wrapper_from_config(cfg)
+        # Освобождаем VRAM после компиляции
+        del build_wrapper
+        torch.cuda.empty_cache()
+
+        cfg_name = _sanitize_config_name(config_name_input) or _config_name(cfg)
+        config_path = Path(cfg["engine_dir"]) / cfg_name
+        save_config(cfg, str(config_path))
+        build_log = buf.getvalue()
+
+        # ── 2. Тестовый инференс ────────────────────────────────
+        progress(0.8, desc="Тестовый инференс...")
+        from PIL import Image
+        test_cfg = dict(cfg)
+        test_cfg["compile_engines_only"] = False
+        test_cfg["output_type"] = "pil"
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2), contextlib.redirect_stderr(buf2):
+            wrapper = create_wrapper_from_config(test_cfg)
+        w, h = int(cfg["width"]), int(cfg["height"])
+        black = Image.new("RGB", (w, h), (0, 0, 0))
+        wrapper.prepare(
+            cfg.get("prompt", ""),
+            cfg.get("negative_prompt", ""),
+            num_inference_steps=cfg.get("num_inference_steps", 50),
+            guidance_scale=cfg.get("guidance_scale", 1.2),
+            delta=cfg.get("delta", 1.0),
+        )
+        # Прогрев: заполняем denoising batch
+        for _ in range(wrapper.stream.batch_size):
+            wrapper.img2img(black)
+        result = wrapper.img2img(black)
+        if isinstance(result, Image.Image):
+            test_status = f"✓ Тест OK — {result.size[0]}×{result.size[1]}"
+        elif isinstance(result, torch.Tensor):
+            test_status = f"✓ Тест OK — tensor {tuple(result.shape)}"
+        else:
+            test_status = f"✓ Тест OK — {type(result).__name__}"
+        del wrapper
+        torch.cuda.empty_cache()
+
+        progress(1.0, desc="Готово")
+        return build_log + "\n" + test_status + f"\n✓ Config: {config_path}\n✓ Готово."
+    except Exception:
+        return buf.getvalue() + "\n✗ " + traceback.format_exc()
+
+
+# ── UI ───────────────────────────────────────────────────────────────────────
+
+def build_app():
+    with gr.Blocks(title="StreamDiffusion Prep", css=CSS, theme=THEME) as app:
+        with gr.Tabs():
+            with gr.Tab("StreamDiffusion"):
+                with gr.Row():
+                    # ╔════════════════════ LEFT COLUMN ════════════════════╗
+                    with gr.Column(scale=1):
+
+                        with gr.Group():
+                            gr.Markdown("**Checkpoint**", elem_classes=["sec-title"])
+                            model_id = gr.Dropdown(
+                                DEFAULT_MODELS, value=DEFAULT_MODELS[0],
+                                label="Model ID / path", allow_custom_value=True,
+                            )
+
+                        with gr.Group():
+                            gr.Markdown("**Sampling**", elem_classes=["sec-title"])
+                            denoise_steps = gr.Slider(
+                                1, 8, 4, step=1,
+                                label="Шаги денойза",
+                                info="1=turbo, 4=по умолчанию (как Steps в ComfyUI)",
+                            )
+                            scheduler = gr.Radio(
+                                ["lcm", "tcd", "none"], value="lcm", label="Consistency LoRA",
+                                info="lcm/tcd — LoRA запекается; none — без LoRA (turbo, distilled)",
+                            )
+                            with gr.Row(elem_classes=["compact"]):
+                                cfg_type = gr.Dropdown(
+                                    ["none", "self", "full", "initialize"],
+                                    value="none", label="CFG type",
+                                    info="запекается (batch structure)",
+                                )
+
+                        with gr.Group():
+                            gr.Markdown("**Resolution**", elem_classes=["sec-title"])
+                            with gr.Row(elem_classes=["compact"]):
+                                width = gr.Slider(256, 1024, 512, step=64, label="W")
+                                height = gr.Slider(256, 1024, 512, step=64, label="H")
+                            with gr.Row(elem_classes=["compact"]):
+                                use_tiny_vae = gr.Checkbox(True, label="Tiny VAE")
+                                cached_attn = gr.Checkbox(False, label="Cached attn")
+                                safety = gr.Checkbox(False, label="Safety")
+                            cache_frames = gr.Slider(1, 16, 1, step=1, label="Cache max frames")
+
+                        with gr.Group():
+                            gr.Markdown("**LoRA** *(style, baked into engine)*", elem_classes=["sec-title"])
+                            with gr.Row(elem_classes=["compact"]):
+                                lora0_id = gr.Textbox("", label="#0 model_id", scale=3)
+                                lora0_scale = gr.Number(1.0, label="scale", minimum=0, maximum=2, step=0.05, scale=1)
+                            with gr.Row(elem_classes=["compact"]):
+                                lora1_id = gr.Textbox("", label="#1 model_id", scale=3)
+                                lora1_scale = gr.Number(1.0, label="scale", minimum=0, maximum=2, step=0.05, scale=1)
+                            with gr.Row(elem_classes=["compact"]):
+                                lora2_id = gr.Textbox("", label="#2 model_id", scale=3)
+                                lora2_scale = gr.Number(1.0, label="scale", minimum=0, maximum=2, step=0.05, scale=1)
+
+                    # ╔════════════════════ RIGHT COLUMN ═══════════════════╗
+                    with gr.Column(scale=1):
+
+                        with gr.Group():
+                            gr.Markdown("**ControlNet** *(model baked)*", elem_classes=["sec-title"])
+                            cn0_id = gr.Textbox("", label="#0 model_id")
+                            cn1_id = gr.Textbox("", label="#1 model_id")
+                            cn2_id = gr.Textbox("", label="#2 model_id")
+
+                        with gr.Group():
+                            gr.Markdown("**IP-Adapter** *(model baked)*", elem_classes=["sec-title"])
+                            use_ipadapter = gr.Checkbox(False, label="Enable")
+                            with gr.Row(elem_classes=["compact"]):
+                                ip_path = gr.Dropdown(
+                                    choices=IP_ADAPTER_CHOICES,
+                                    value="h94/IP-Adapter/models/ip-adapter_sd15.safetensors",
+                                    allow_custom_value=True,
+                                    label="Adapter model path",
+                                    scale=1,
+                                )
+                                ip_enc = gr.Dropdown(
+                                    choices=IP_ENCODER_CHOICES,
+                                    value="h94/IP-Adapter/models/image_encoder",
+                                    allow_custom_value=True,
+                                    label="Encoder path (CLIP)",
+                                    scale=1,
+                                )
+                            with gr.Row(elem_classes=["compact"]):
+                                ip_tokens = gr.Dropdown(
+                                    [4, 16], value=4,
+                                    label="Reference detail",
+                                    info="4 = базовая детализация, 16 = высокая (сильнее перенос стиля). Фиксируется при сборке движка.",
+                                )
+                                ip_type = gr.Radio(["regular", "faceid"], value="regular", label="Type")
+
+                    # ╔════════════════════ THIRD COLUMN: Output ═══════════════════╗
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Output**", elem_classes=["sec-title"])
+                            config_name = gr.Textbox(
+                                "",
+                                label="Config filename",
+                                placeholder="config_lcm_4steps_none_512x512 (пусто = автоген)",
+                                info="Без .yaml — добавится автоматически",
+                            )
+                            btn_build = gr.Button("Build", variant="primary", elem_classes=["act-btn"])
+                            log = gr.Textbox(label="Log", lines=8, max_lines=24, interactive=False, elem_classes=["log"])
+
+                all_fields = [
+                    model_id, width, height, cfg_type, use_tiny_vae, scheduler,
+                    lora0_id, lora0_scale, lora1_id, lora1_scale, lora2_id, lora2_scale,
+                    cn0_id, cn1_id, cn2_id,
+                    use_ipadapter, ip_path, ip_enc, ip_tokens, ip_type,
+                    cached_attn, cache_frames, safety,
+                    denoise_steps,
+                    config_name,
+                ]
+                btn_build.click(fn=do_build, inputs=all_fields, outputs=[log])
+
+            with gr.Tab("flux klein"):
+                gr.Markdown("*(в разработке)*")
+
+            with gr.Tab("depthanything"):
+                gr.Markdown("*(в разработке)*")
+
+            with gr.Tab("yolo"):
+                gr.Markdown("*(в разработке)*")
+
+            with gr.Tab("settings"):
+                gr.Markdown("*(в разработке)*")
+
+    return app
+
+
+# Должно быть на уровне модуля для `gradio gradio_prepare.py` (reload mode)
+demo = build_app()
+
+if __name__ == "__main__":
+    demo.launch(server_name="0.0.0.0", server_port=7861)
