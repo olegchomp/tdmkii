@@ -5,4 +5,5 @@ __pycache__/
 venv/
 logs/
 engines/
+checkpoints/
 toe/streamdiffusion/Backup/

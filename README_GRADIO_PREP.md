@@ -94,11 +94,25 @@ Runtime-параметры **убраны из UI** и задаются хард
 
 - **Build** — сборка TRT engines и сохранение config.yaml
 
+### Вкладка DepthAnything
+
+Подготовка TensorRT-движков для Depth Anything (v1 и v2). Один общий venv проекта.
+
+- **Version** — Depth Anything v1 или v2.
+- **Size** — v1: s/b/l; v2: s/b/l/g (g пока не на HF — нужен локальный чекпоинт).
+- **Width / Height** — разрешение входа (по умолчанию 518; выравнивается по кратности 14).
+- **Checkpoints folder** — папка для чекпоинтов `.pth` (по умолчанию **checkpoints/** — на уровне с **engines/**). При первом Build недостающие чекпоинты скачиваются в коде с Hugging Face.
+- **Build** — сборка ONNX и TensorRT-движка.
+- Движки сохраняются в **engines/depth/**. Имя файла: **{имя_чекпоинта}_{width}x{height}.engine** (напр. `depth_anything_vits14_518x518.engine`, `depth_anything_v2_vits_518x518.engine`).
+
+Собранный `.engine` можно использовать в `DepthAnythingTensorrtPreprocessor` (StreamDiffusion): указать `engine_path` и `detect_resolution` равным размеру входа движка.
+
 ---
 
 ## Артефакты
 
 - **config.yaml** — в `engines/<model_slug>/config.yaml`
-- **engines/** — директория с TRT-движками
+- **engines/** — директория с TRT-движками (StreamDiffusion)
+- **engines/depth/** — движки Depth Anything (вкладка DepthAnything)
 
 Инференс-скрипт загружает config через `create_wrapper_from_config()` и может менять runtime-параметры через `update_stream_params()`.

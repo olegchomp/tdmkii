@@ -322,6 +322,52 @@ def do_build(*args, progress=gr.Progress()):
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
 
 
+def do_build_depth(
+    model_version_str,
+    model_size,
+    width,
+    height,
+    progress=gr.Progress(),
+):
+    """Build Depth Anything TensorRT engine. Checkpoints downloaded from HF if missing."""
+    buf = io.StringIO()
+
+    def log(msg):
+        buf.write(msg + "\n")
+
+    try:
+        model_version = int(model_version_str)
+        width = max(14, int(width))
+        height = max(14, int(height))
+        checkpoints_dir = str(REPO_ROOT / "checkpoints")
+        engine_output_dir = REPO_ROOT / "engines" / "depth"
+        engine_output_dir.mkdir(parents=True, exist_ok=True)
+
+        progress(0.0, desc="Ensuring checkpoint...")
+        from tools.depth_anything_build import ensure_checkpoint, build_depth_engine
+
+        checkpoint_path = ensure_checkpoint(
+            model_version, model_size, checkpoints_dir, log_fn=log
+        )
+        progress(0.05, desc="Building engine...")
+        engine_path = build_depth_engine(
+            model_version,
+            model_size,
+            width,
+            height,
+            checkpoint_path,
+            str(engine_output_dir),
+            progress_callback=lambda p, desc: progress(p, desc=desc),
+            log_fn=log,
+        )
+        log(f"✓ Engine: {engine_path}")
+        log("Имя движка: {имя_чекпоинта}_{width}x{height}.engine (напр. depth_anything_vits14_518x518.engine).")
+        log("Использование: engine_path в DepthAnythingTensorrtPreprocessor, detect_resolution = размер входа движка.")
+        return buf.getvalue() + "✓ Done."
+    except Exception:
+        return buf.getvalue() + "\n✗ " + traceback.format_exc()
+
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_app():
@@ -440,7 +486,60 @@ def build_app():
                 gr.Markdown("*(in development)*")
 
             with gr.Tab("DepthAnything"):
-                gr.Markdown("*(in development)*")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Model**", elem_classes=["sec-title"])
+                            depth_version = gr.Radio(
+                                [("Depth Anything v1", "1"), ("Depth Anything v2", "2")],
+                                value="1",
+                                label="Version",
+                            )
+                            depth_size = gr.Dropdown(
+                                [("Small", "s"), ("Base", "b"), ("Large", "l")],
+                                value="s",
+                                label="Size",
+                                info="v1: Small/Base/Large; v2: + Giant (пока не на HF)",
+                            )
+                        with gr.Group():
+                            gr.Markdown("**Resolution**", elem_classes=["sec-title"])
+                            with gr.Row(elem_classes=["compact"]):
+                                depth_width = gr.Number(518, label="Width", minimum=14, maximum=2048, step=14)
+                                depth_height = gr.Number(518, label="Height", minimum=14, maximum=2048, step=14)
+                            gr.Markdown("Rounded to multiple of 14 for ViT.", elem_classes=["sec-title"])
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Output**", elem_classes=["sec-title"])
+                            depth_btn_build = gr.Button("Build", variant="primary", elem_classes=["act-btn"])
+                            depth_log = gr.Textbox(label="Log", lines=10, max_lines=24, interactive=False, elem_classes=["log"])
+                depth_engines_dir = REPO_ROOT / "engines" / "depth"
+                gr.Markdown(
+                    f"**Чекпоинты:** `checkpoints/` (на уровне с `engines/`). "
+                    f"**Движки:** `{depth_engines_dir}`. "
+                    "Имя файла движка: **{имя_чекпоинта}_{width}x{height}.engine** (напр. `depth_anything_vits14_518x518.engine`, `depth_anything_v2_vits_518x518.engine`)."
+                )
+
+                def depth_version_change(ver):
+                    if ver == "2":
+                        return gr.update(
+                            choices=[("Small", "s"), ("Base", "b"), ("Large", "l"), ("Giant", "g")],
+                            value="s",
+                        )
+                    return gr.update(
+                        choices=[("Small", "s"), ("Base", "b"), ("Large", "l")],
+                        value="s",
+                    )
+
+                depth_version.change(
+                    fn=depth_version_change,
+                    inputs=[depth_version],
+                    outputs=[depth_size],
+                )
+                depth_btn_build.click(
+                    fn=do_build_depth,
+                    inputs=[depth_version, depth_size, depth_width, depth_height],
+                    outputs=[depth_log],
+                )
 
             with gr.Tab("YOLO"):
                 gr.Markdown("*(in development)*")

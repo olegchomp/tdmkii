@@ -1,0 +1,36 @@
+# TouchDiffusion MKII — зависимости на основе используемого кода
+# Сначала установите PyTorch с CUDA (под вашу версию CUDA):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Ядро (SD.py, gradio_prepare.py, StreamDiffusion)
+numpy
+PyYAML
+gradio
+
+# StreamDiffusion (install_requires из setup.py)
+diffusers @ git+https://github.com/varshith15/diffusers.git@3e3b72f557e91546894340edabc845e894f00922
+transformers==4.56.0
+accelerate==1.10.0
+huggingface_hub==0.35.0
+Pillow==11.0.0
+fire==0.6.0
+omegaconf==2.3.0
+
+# Сборка TRT-движков (gradio_prepare / StreamDiffusion, вкладка DepthAnything)
+onnx==1.18.0
+onnxruntime==1.23.2
+onnxruntime-gpu==1.23.2
+polygraphy==0.49.24
+protobuf==4.25.3
+onnx-graphsurgeon==0.5.8
+colored==2.2.4
+# TensorRT (StreamDiffusion, Depth Anything, depth_tensorrt и др.); под вашу CUDA, при ошибке:
+#   pip install --extra-index-url https://pypi.nvidia.com tensorrt
+
+# ControlNet (если используете controlnet в конфиге)
+controlnet-aux==0.0.10
+
+# IP-Adapter: локальная папка diffusers_ipadapter подключается через sys.path в коде, pip install не нужен.
+
+# Windows
+pywin32==306; sys_platform == 'win32'
