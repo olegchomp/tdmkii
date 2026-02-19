@@ -73,6 +73,7 @@ class sdExt:
 			self.log("Status", f"Config loaded: {config_path.name}")
 			self._create_pipeline()
 			self.fill_config_info_table()
+			self._sync_params_after_config()
 		except Exception as e:
 			self.log("Error", e)
 
@@ -106,6 +107,25 @@ class sdExt:
 			self.log("Status", status)
 		except Exception as e:
 			self.log("Error", e)
+
+	def _sync_params_after_config(self):
+		"""Применить к pipeline текущие значения параметров из UI после загрузки конфига."""
+		if self.stream is None:
+			return
+		try:
+			self.update_prompts()
+			self.update_guidance(parent().par.Cfg.val, parent().par.Deltamult.val)
+			self.update_seed(int(parent().par.Seed.val))
+			self.update_denoise(parent().par.Denoise.val)
+			self.update_sampler(str(parent().par.Sampler.val))
+			self.update_controlnet_enabled(bool(parent().par.Controlnet.val))
+			for i in range(self.n_controlnets):
+				self.update_controlnet_scale(i, float(parent().par[f"Controlnet{i + 1}weight"].val))
+			self.update_ipadapter_enabled(bool(parent().par.Ipadapter.val))
+			self.update_ipadapter_scale(float(parent().par.Ipadapterweight.val))
+			self.update_safety_checker(bool(parent().par.Safety.val))
+		except Exception:
+			pass
 
 	def _update_size(self, width: int, height: int):
 		"""Update output tensors to match resolution."""
@@ -358,10 +378,8 @@ class sdExt:
 			self.update_prompts()
 		elif name.endswith("weight") and name.startswith("Prompts"):
 			self.update_prompt_weights()
-		elif name == "Cfgscale":
-			self.update_guidance(par.val, parent().par.Deltamult.val)
-		elif name == "Deltamult":
-			self.update_guidance(parent().par.Cfgscale.val, par.val)
+		elif name == "Cfg" or name == "Deltamult":
+			self.update_guidance(parent().par.Cfg.val, parent().par.Deltamult.val)
 		elif name == "Seed":
 			self.update_seed(int(par.val))
 		elif name == "Denoise":
