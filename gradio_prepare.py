@@ -1,7 +1,7 @@
 """
 Gradio UI for StreamDiffusion model preparation.
 Builds TRT engines and saves YAML config. Inference is handled by a separate script.
-engines/<model_name>/ — движки и config.yaml
+engines/sd/<model_slug>/ — движки и config.yaml
 """
 from __future__ import annotations
 
@@ -179,7 +179,7 @@ def ui_to_config(
 ):
     base = "engines"
     slug = _model_slug(model_id)
-    engine_dir = f"{base}/{slug}"
+    engine_dir = f"{base}/sd/{slug}"
 
     t_index_list = _steps_to_t_index_list(int(denoise_steps))
     batch = len(t_index_list)  # frame_buffer_size=1, min=max=batch
@@ -341,6 +341,9 @@ def build_app():
 
                         with gr.Group():
                             gr.Markdown("**Sampling**", elem_classes=["sec-title"])
+                            with gr.Row(elem_classes=["compact"]):
+                                width = gr.Slider(256, 1024, 512, step=64, label="Width")
+                                height = gr.Slider(256, 1024, 512, step=64, label="Height")
                             denoise_steps = gr.Slider(
                                 1, 8, 4, step=1,
                                 label="Denoise steps",
@@ -358,13 +361,7 @@ def build_app():
                                 )
 
                         with gr.Group():
-                            gr.Markdown("**Resolution**", elem_classes=["sec-title"])
-                            with gr.Row(elem_classes=["compact"]):
-                                width = gr.Slider(256, 1024, 512, step=64, label="Width")
-                                height = gr.Slider(256, 1024, 512, step=64, label="Height")
-
-                        with gr.Group():
-                            gr.Markdown("**LoRA** *(style, baked into engine)*", elem_classes=["sec-title"])
+                            gr.Markdown("**LoRA**", elem_classes=["sec-title"])
                             with gr.Row(elem_classes=["compact"]):
                                 lora0_id = gr.Textbox("", label="#0 model_id", scale=3)
                                 lora0_scale = gr.Number(1.0, label="scale", minimum=0, maximum=2, step=0.05, scale=1)
@@ -379,13 +376,13 @@ def build_app():
                     with gr.Column(scale=1):
 
                         with gr.Group():
-                            gr.Markdown("**ControlNet** *(model baked)*", elem_classes=["sec-title"])
+                            gr.Markdown("**ControlNet**", elem_classes=["sec-title"])
                             cn0_id = gr.Textbox("", label="#0 model_id")
                             cn1_id = gr.Textbox("", label="#1 model_id")
                             cn2_id = gr.Textbox("", label="#2 model_id")
 
                         with gr.Group():
-                            gr.Markdown("**IP-Adapter** *(model baked)*", elem_classes=["sec-title"])
+                            gr.Markdown("**IP-Adapter**", elem_classes=["sec-title"])
                             use_ipadapter = gr.Checkbox(False, label="Enable")
                             with gr.Row(elem_classes=["compact"]):
                                 ip_path = gr.Dropdown(

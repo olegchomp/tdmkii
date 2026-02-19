@@ -2,7 +2,8 @@ import os
 import sys
 from pathlib import Path
 from datetime import datetime
-
+from TDStoreTools import StorageManager
+import TDFunctions as TDF
 
 class sdExt:
 	"""
@@ -71,6 +72,7 @@ class sdExt:
 
 			self.log("Status", f"Config loaded: {config_path.name}")
 			self._create_pipeline()
+			self.fill_config_info_table()
 		except Exception as e:
 			self.log("Error", e)
 
@@ -110,6 +112,50 @@ class sdExt:
 		self.rgba_tensor = self.torch.zeros((height, width, 4), dtype=self.torch.float32, device=self.device)
 		self.rgba_tensor[..., 3] = 1.0
 		self.output_interface = TopCUDAInterface(width, height, 4, self.np.float32)
+
+	def _get_config_path_for_model(self, model_name):
+		"""Return config path for given model name from the model table (null2), or None."""
+		table = op("null2")
+		if table is None:
+			return None
+		for row in range(table.numRows):
+			if table[row, 0].val == model_name:
+				return table[row, 1].val
+		return None
+
+	def fill_config_info_table(self):
+		"""Read YAML from path in op('null4')[0,1] and fill table1 with all parameters."""
+		null4 = op("null4")
+		tbl = op("table1")
+		if null4 is None or tbl is None:
+			return
+		config_path = null4[0, 1].val if hasattr(null4[0, 1], 'val') else str(null4[0, 1]).strip()
+		tbl.clear()
+		if not config_path:
+			tbl.appendRow(["error", "no path in null4[0,1]"])
+			return
+		config_path = Path(config_path)
+		if not config_path.is_absolute():
+			config_path = self.repo_root / config_path
+		if not config_path.exists():
+			tbl.appendRow(["config", str(config_path)])
+			tbl.appendRow(["error", "file not found"])
+			return
+		try:
+			with open(config_path, "r", encoding="utf-8") as f:
+				data = self.yaml.safe_load(f)
+		except Exception as e:
+			tbl.appendRow(["error", str(e)])
+			return
+		if not isinstance(data, dict):
+			tbl.appendRow(["content", str(data)])
+			return
+		for key, value in data.items():
+			if isinstance(value, (dict, list)):
+				value_str = self.yaml.dump(value, default_flow_style=True, allow_unicode=True).strip()
+			else:
+				value_str = str(value)
+			tbl.appendRow([str(key), value_str])
 
 	# ── Inference ────────────────────────────────────────────
 
@@ -302,9 +348,12 @@ class sdExt:
 				self.log("Error", f"Config not found for: {model_name}")
 
 	def parexec_onValueChange(self, par, prev):
+		name = par.name
+		if name == "Model":
+			self.fill_config_info_table()
+			return
 		if self.stream is None:
 			return
-		name = par.name
 		if name.endswith("prompt") and name.startswith("Prompts"):
 			self.update_prompts()
 		elif name.endswith("weight") and name.startswith("Prompts"):
