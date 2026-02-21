@@ -5,6 +5,7 @@ Engines are saved to engines/yolo/ with predictable names.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Callable
@@ -70,10 +71,16 @@ def build_yolo_engine(
         progress_callback(0.2, "Exporting to TensorRT engine...")
     log("Exporting (this may take several minutes)...")
 
-    result_path = model.export(**export_kwargs)
+    # Export into engine_output_dir so artifacts don't end up in project root
+    orig_cwd = os.getcwd()
+    try:
+        os.chdir(engine_output_dir)
+        result_path = model.export(**export_kwargs)
+    finally:
+        os.chdir(orig_cwd)
     result_path = Path(result_path)
     if not result_path.is_absolute():
-        result_path = result_path.resolve()
+        result_path = (engine_output_dir / result_path).resolve()
 
     imgsz_str = f"{imgsz[0]}x{imgsz[1]}" if isinstance(imgsz, tuple) else str(imgsz)
     engine_name = f"{model_stem}_{imgsz_str}_b{batch}"
@@ -88,7 +95,12 @@ def build_yolo_engine(
         if progress_callback:
             progress_callback(0.9, "Copying engine to output dir...")
         shutil.copy2(result_path, dest_path)
-        log(f"Engine copied to: {dest_path}")
+        if result_path.exists():
+            try:
+                result_path.unlink()
+            except OSError:
+                pass
+        log(f"Engine saved: {dest_path}")
     else:
         log(f"Engine saved: {dest_path}")
 
