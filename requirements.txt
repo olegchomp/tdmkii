@@ -16,7 +16,8 @@ Pillow==11.0.0
 fire==0.6.0
 omegaconf==2.3.0
 
-# Сборка TRT-движков (gradio_prepare / StreamDiffusion, вкладка DepthAnything)
+# Сборка TRT-движков (gradio_prepare: DepthAnything, YOLO Ultralytics)
+ultralytics>=8.0.0
 onnx==1.18.0
 onnxruntime==1.23.2
 onnxruntime-gpu==1.23.2

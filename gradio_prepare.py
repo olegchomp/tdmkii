@@ -368,6 +368,66 @@ def do_build_depth(
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
 
 
+def do_build_yolo(
+    model_spec,
+    imgsz_w,
+    imgsz_h,
+    batch,
+    half,
+    int8,
+    dynamic,
+    data,
+    fraction,
+    progress=gr.Progress(),
+):
+    """Build Ultralytics YOLO TensorRT engine. Official models download on first use."""
+    buf = io.StringIO()
+
+    def log(msg):
+        buf.write(msg + "\n")
+
+    try:
+        def _round32(x):
+            x = max(320, min(1280, int(x)))
+            return (x // 32) * 32
+        w = _round32(imgsz_w)
+        h = _round32(imgsz_h)
+        imgsz = (h, w)
+        batch = max(1, min(64, int(batch)))
+        fraction_val = 1.0
+        if fraction is not None:
+            try:
+                fraction_val = max(0.01, min(1.0, float(fraction)))
+            except (TypeError, ValueError):
+                pass
+        data_str = (data or "").strip() or None
+        engine_output_dir = REPO_ROOT / "engines" / "yolo"
+        engine_output_dir.mkdir(parents=True, exist_ok=True)
+
+        from tools.yolo_build import build_yolo_engine
+
+        engine_path = build_yolo_engine(
+            model_spec=model_spec or "yolo11n.pt",
+            imgsz=imgsz,
+            batch=batch,
+            half=bool(half),
+            int8=bool(int8),
+            dynamic=bool(dynamic),
+            workspace=None,
+            simplify=True,
+            data=data_str,
+            fraction=fraction_val,
+            engine_output_dir=str(engine_output_dir),
+            progress_callback=lambda p, desc: progress(p, desc=desc),
+            log_fn=log,
+        )
+        log(f"✓ Engine: {engine_path}")
+        log("Движки сохраняются в engines/yolo/. Имя: {model}_{h}x{w}_b{batch}[_fp16].engine")
+        return buf.getvalue() + "✓ Done."
+    except Exception:
+        return buf.getvalue() + "\n✗ " + traceback.format_exc()
+
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_app():
@@ -542,7 +602,76 @@ def build_app():
                 )
 
             with gr.Tab("YOLO"):
-                gr.Markdown("*(in development)*")
+                YOLO_PRESETS = [
+                    "yolo11n.pt",
+                    "yolo11s.pt",
+                    "yolo11m.pt",
+                    "yolo11l.pt",
+                    "yolo11x.pt",
+                    "yolo8n.pt",
+                    "yolo8s.pt",
+                    "yolo8m.pt",
+                    "yolo8l.pt",
+                    "yolo8x.pt",
+                    "yolo11n-pose.pt",
+                    "yolo11s-pose.pt",
+                    "yolo8n-pose.pt",
+                    "yolo8n-seg.pt",
+                ]
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Model & input**", elem_classes=["sec-title"])
+                            yolo_model = gr.Dropdown(
+                                YOLO_PRESETS,
+                                value="yolo11n.pt",
+                                label="Model",
+                                allow_custom_value=True,
+                                info="Official name or path to .pt",
+                            )
+                            with gr.Row(elem_classes=["compact"]):
+                                yolo_imgsz_w = gr.Number(640, label="Width", minimum=320, maximum=1280, step=32)
+                                yolo_imgsz_h = gr.Number(640, label="Height", minimum=320, maximum=1280, step=32)
+                                yolo_batch = gr.Number(1, label="batch", minimum=1, maximum=64, step=1)
+                        with gr.Group():
+                            gr.Markdown("**Precision & build**", elem_classes=["sec-title"])
+                            yolo_half = gr.Checkbox(True, label="FP16 (half)")
+                            yolo_dynamic = gr.Checkbox(False, label="Dynamic input/batch")
+                        with gr.Group():
+                            gr.Markdown("**INT8 calibration**", elem_classes=["sec-title"])
+                            yolo_int8 = gr.Checkbox(False, label="Enable INT8")
+                            yolo_data = gr.Textbox(
+                                "",
+                                label="Data YAML",
+                                placeholder="coco8.yaml or path to dataset yaml",
+                            )
+                            yolo_fraction = gr.Number(1.0, label="Calibration fraction", minimum=0.01, maximum=1.0, step=0.1)
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Output**", elem_classes=["sec-title"])
+                            yolo_btn_build = gr.Button("Build", variant="primary", elem_classes=["act-btn"])
+                            yolo_log = gr.Textbox(label="Log", lines=10, max_lines=24, interactive=False, elem_classes=["log"])
+                yolo_engines_dir = REPO_ROOT / "engines" / "yolo"
+                gr.Markdown(
+                    f"**Движки:** `{yolo_engines_dir}`. "
+                    "Имя: **{model_stem}_{height}x{width}_b{batch}[_fp16].engine**. "
+                    "Официальные модели (yolo11n.pt и т.д.) скачиваются при первом запуске."
+                )
+                yolo_btn_build.click(
+                    fn=do_build_yolo,
+                    inputs=[
+                        yolo_model,
+                        yolo_imgsz_w,
+                        yolo_imgsz_h,
+                        yolo_batch,
+                        yolo_half,
+                        yolo_int8,
+                        yolo_dynamic,
+                        yolo_data,
+                        yolo_fraction,
+                    ],
+                    outputs=[yolo_log],
+                )
 
             with gr.Tab("Settings"):
                 gr.Markdown("*(in development)*")
