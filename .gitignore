@@ -9,6 +9,7 @@ checkpoints/
 toe/streamdiffusion/Backup/
 toe/depthanything/Backup/
 toe/yolo/Backup/
+toe/fluxklein/Backup/
 # Ultralytics export can drop these in cwd if not exporting into engines/yolo
 yolo*.engine
 yolo*.onnx

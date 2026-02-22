@@ -16,9 +16,10 @@ Pillow==11.0.0
 fire==0.6.0
 omegaconf==2.3.0
 
-# Сборка TRT-движков (gradio_prepare: DepthAnything, YOLO Ultralytics)
+# Сборка TRT-движков (gradio_prepare: DepthAnything, YOLO, Flux Klein)
 ultralytics>=8.0.0
 onnx==1.18.0
+onnxscript
 onnxruntime==1.23.2
 onnxruntime-gpu==1.23.2
 polygraphy==0.49.24

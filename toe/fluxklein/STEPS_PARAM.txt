@@ -1,0 +1,14 @@
+Добавление параметра Steps в Flux Klein:
+
+1. Откройте fluxklen.toe в TouchDesigner
+2. Выберите компонент Flux Klein (компонент с DAT Extension)
+3. ПКМ → Add Custom Parameter → Custom Page (или в существующую страницу)
+4. New parameter:
+   - Name: Steps
+   - Label: Steps
+   - Type: Int
+   - Default: 4
+   - Min: 1, Max: 8
+   - Exponent: 0 (discrete)
+
+Если параметр Steps отсутствует, используется значение по умолчанию 4.

@@ -430,6 +430,46 @@ def do_build_yolo(
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
 
 
+def do_build_flux_klein(flux_width, flux_height, progress=gr.Progress()):
+    """Build Flux Klein 4B TRT engines (transformer + VAE). Requires _diffusers_main."""
+    buf = io.StringIO()
+
+    def log(msg):
+        buf.write(msg + "\n")
+
+    try:
+        w = (max(64, min(2048, int(flux_width or 512))) // 64) * 64
+        h = (max(64, min(2048, int(flux_height or 512))) // 64) * 64
+        engine_output_dir = REPO_ROOT / "engines" / "flux_klein"
+        engine_output_dir.mkdir(parents=True, exist_ok=True)
+
+        from tools.flux_klein_build import build_flux_klein_engines
+
+        tr_path, vae_enc_path, vae_dec_path = build_flux_klein_engines(
+            engine_output_dir=str(engine_output_dir),
+            width=w,
+            height=h,
+            progress_callback=lambda p, desc: progress(p, desc=desc),
+            log_fn=log,
+        )
+        config_path = engine_output_dir / f"config_flux_klein_{w}x{h}.yaml"
+        import yaml
+        cfg = {
+            "model_id": "black-forest-labs/FLUX.2-klein-4B",
+            "transformer_engine": str(tr_path),
+            "vae_encoder_engine": str(vae_enc_path),
+            "vae_engine": str(vae_dec_path),
+            "width": w,
+            "height": h,
+        }
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, default_flow_style=False, indent=2)
+        log(f"✓ Config: {config_path}")
+        return buf.getvalue() + "✓ Done."
+    except Exception:
+        return buf.getvalue() + "\n✗ " + traceback.format_exc()
+
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_app():
@@ -545,7 +585,31 @@ def build_app():
                 btn_build.click(fn=do_build, inputs=all_fields, outputs=[log])
 
             with gr.Tab("Flux Klein"):
-                gr.Markdown("*(in development)*")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        with gr.Group():
+                            gr.Markdown("**Resolution**", elem_classes=["sec-title"])
+                            with gr.Row(elem_classes=["compact"]):
+                                flux_width = gr.Slider(512, 1024, 512, step=64, label="Width")
+                                flux_height = gr.Slider(512, 1024, 512, step=64, label="Height")
+                            flux_btn_build = gr.Button("Build", variant="primary", elem_classes=["act-btn"])
+                            flux_log = gr.Textbox(
+                                label="Log", lines=10, max_lines=24, interactive=False, elem_classes=["log"],
+                            )
+                    with gr.Column(scale=1):
+                        flux_engines_dir = REPO_ROOT / "engines" / "flux_klein"
+                        gr.Markdown(
+                            f"**Движки:** `{flux_engines_dir}`\n\n"
+                            "Требуется `_diffusers_main` (diffusers main):\n"
+                            "`git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`\n\n"
+                            "Flux Klein: BF16, img2img. Workspace — auto. Выход: transformer, vae_encoder, vae_decoder engines.",
+                            elem_classes=["sec-title"],
+                        )
+                flux_btn_build.click(
+                    fn=do_build_flux_klein,
+                    inputs=[flux_width, flux_height],
+                    outputs=[flux_log],
+                )
 
             with gr.Tab("DepthAnything"):
                 with gr.Row():
