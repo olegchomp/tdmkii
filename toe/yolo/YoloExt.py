@@ -4,6 +4,7 @@ No auto-load: init only sets up component. Load engine by Pulse par "Loadengine"
 Inference runs only when par Inference = True.
 - table1: detections (det_id, class, confidence, x, y, width, height) in pixels
 - table2: pose keypoints when using pose model (det_id, kpt_id, x, y, visibility)
+- scriptOp: segment masks (RGBA) when using segment model — combined mask in R,G,B, A=1
 '''
 import os
 import re
@@ -209,6 +210,8 @@ class YoloExt:
 		image = torch.as_tensor(self.to_tensor, device=self.device)
 		if not torch.isfinite(image).all():
 			image = torch.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0)
+		orig_h, orig_w = int(image.shape[1]), int(image.shape[2])
+		script_out = None  # segment mask or None -> pass original
 		image_tensor = self.preprocess_image(image)
 		image_tensor = image_tensor[:, [2, 1, 0], :, :].clone()  # BGR -> RGB
 
@@ -287,6 +290,64 @@ class YoloExt:
 						x_px = float(kpt_xy[i, k, 0])
 						y_px = orig_h - float(kpt_xy[i, k, 1])  # image Y-down -> TD Y-up
 						tbl_kpt.appendRow([f"det_{i}", k, x_px, y_px, v])
+
+			# Script TOP: segment mask (task=segment) or pass-through original (else)
+			masks = getattr(results[0], 'masks', None)
+			try:
+				task = str(self.ownerComp.par.Task.eval() or 'detect').strip().lower()
+			except Exception:
+				task = 'detect'
+			if task == 'segment':
+				try:
+					if masks is not None and masks.data is not None and masks.data.shape[0] > 0:
+						from ultralytics.utils.plotting import Colors
+						colors = Colors()
+						md = masks.data
+						if hasattr(md, 'cpu'):
+							md = md.cpu()
+						md = md.float().to(device=self.device)
+						ratio = min(self.engine_w / orig_w, self.engine_h / orig_h)
+						new_w = round(orig_w * ratio)
+						new_h = round(orig_h * ratio)
+						pad_left = round((self.engine_w - new_w) / 2 - 0.1)
+						pad_top = round((self.engine_h - new_h) / 2 - 0.1)
+						md = md[:, pad_top:pad_top + new_h, pad_left:pad_left + new_w]
+						md = F.interpolate(md.unsqueeze(1), size=(orig_h, orig_w), mode='bilinear', align_corners=False).squeeze(1)
+						seg_out = torch.zeros(4, orig_h, orig_w, device=self.device, dtype=torch.float32)
+						mask_thresh = 0.5
+						for i in range(md.shape[0]):
+							mi = (md[i] > mask_thresh).float()
+							r, g, b = colors(i, bgr=False)
+							seg_out[0] = seg_out[0] * (1 - mi) + (r / 255.0) * mi
+							seg_out[1] = seg_out[1] * (1 - mi) + (g / 255.0) * mi
+							seg_out[2] = seg_out[2] * (1 - mi) + (b / 255.0) * mi
+						seg_out[3] = 1.0
+					else:
+						seg_out = torch.zeros(4, orig_h, orig_w, device=self.device, dtype=torch.float32)
+						seg_out[3] = 1.0
+					script_out = seg_out.permute(1, 2, 0).flip(0).contiguous()  # (C,H,W)->(H,W,C), flip Y for TD
+				except Exception as e:
+					debug(e)
+
+		# Script TOP: segment mask or pass-through original
+		try:
+			if script_out is not None:
+				out_iface = TopCUDAInterface(orig_w, orig_h, 4, np.float32)
+				op('script1').copyCUDAMemory(script_out.data_ptr(), out_iface.size, out_iface.mem_shape)
+			else:
+				img = image[:4, :, :].float()
+				if img.shape[0] == 3:
+					alpha = torch.ones(1, orig_h, orig_w, device=self.device, dtype=torch.float32)
+					img = torch.cat([img, alpha], dim=0)
+				if img.max() > 1.0:
+					img = img.clamp(0, 255) / 255.0
+				else:
+					img = img.clamp(0, 1)
+				img_hwc = img.permute(1, 2, 0).contiguous()  # no flip: input already TD Y-up
+				out_iface = TopCUDAInterface(orig_w, orig_h, 4, np.float32)
+				op('script1').copyCUDAMemory(img_hwc.data_ptr(), out_iface.size, out_iface.mem_shape)
+		except Exception as e:
+			debug(e)
 
 	def about(self, endpoint):
 		if endpoint == 'Urlg':
