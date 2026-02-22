@@ -370,6 +370,7 @@ def do_build_depth(
 
 def do_build_yolo(
     model_spec,
+    task,
     imgsz_w,
     imgsz_h,
     batch,
@@ -418,6 +419,7 @@ def do_build_yolo(
             data=data_str,
             fraction=fraction_val,
             engine_output_dir=str(engine_output_dir),
+            task=(task or "").strip() or None,
             progress_callback=lambda p, desc: progress(p, desc=desc),
             log_fn=log,
         )
@@ -629,6 +631,12 @@ def build_app():
                                 allow_custom_value=True,
                                 info="Official name or path to .pt",
                             )
+                            yolo_task = gr.Dropdown(
+                                ["detect", "segment", "pose", "obb"],
+                                value="detect",
+                                label="Task",
+                                info="Must match model type; set explicitly for custom model names",
+                            )
                             with gr.Row(elem_classes=["compact"]):
                                 yolo_imgsz_w = gr.Number(640, label="Width", minimum=320, maximum=1280, step=32)
                                 yolo_imgsz_h = gr.Number(640, label="Height", minimum=320, maximum=1280, step=32)
@@ -661,6 +669,7 @@ def build_app():
                     fn=do_build_yolo,
                     inputs=[
                         yolo_model,
+                        yolo_task,
                         yolo_imgsz_w,
                         yolo_imgsz_h,
                         yolo_batch,

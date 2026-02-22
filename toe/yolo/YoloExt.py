@@ -1,7 +1,9 @@
 '''
 YoloExt: YOLO inference in TouchDesigner via Ultralytics.
 No auto-load: init only sets up component. Load engine by Pulse par "Loadengine" (parexec -> Loadengine()).
-Inference runs only when par Inference = True. Fills table1 with detections.
+Inference runs only when par Inference = True.
+- table1: detections (det_id, class, confidence, x, y, width, height) in pixels
+- table2: pose keypoints when using pose model (det_id, kpt_id, x, y, visibility)
 '''
 import os
 import re
@@ -43,6 +45,10 @@ class YoloExt:
 			self.iou_threshold = float(self.ownerComp.par.Iou.val or 0.45)
 		except Exception:
 			self.iou_threshold = 0.45
+		try:
+			self.kpt_conf_threshold = float(self.ownerComp.par.Keypointconfidence.val or 0.25)
+		except Exception:
+			self.kpt_conf_threshold = 0.25
 
 		try:
 			self.source = op('null1')
@@ -52,8 +58,20 @@ class YoloExt:
 			self.to_tensor = None
 
 	def Loadengine(self):
-		"""Load or reload engine via Ultralytics YOLO(engine_path). Same TRT as export."""
-		self.model = None
+		"""Unload old pipeline, load new engine. Pulse par Loadengine triggers this."""
+		if self.model is not None:
+			del self.model
+			self.model = None
+		self.stream = None
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
+		try:
+			self.source = op('null1')
+			self.to_tensor = TopArrayInterface(self.source)
+		except Exception:
+			self.source = None
+			self.to_tensor = None
+
 		env_path = self.ownerComp.par.Venvpath.val or ""
 		engine_file = self.ownerComp.par.Enginefile.val or ""
 		if not env_path or not engine_file:
@@ -109,17 +127,40 @@ class YoloExt:
 				self.iou_threshold = float(par.val or 0.45)
 			except Exception:
 				pass
+		elif par.name == "Keypointconfidence":
+			try:
+				self.kpt_conf_threshold = float(par.val or 0.25)
+			except Exception:
+				pass
 
 	def preprocess_image(self, image):
-		"""(C, H, W) -> (1, 3, engine_h, engine_w) normalized 0-1 for model.predict(source=tensor)."""
+		"""(C, H, W) -> (1, 3, engine_h, engine_w) with letterbox (proportional scale + pad)."""
 		image = image[:3, :, :]
+		src_h, src_w = image.shape[1], image.shape[2]
+		image = torch.flip(image, dims=[1])  # TD TOP: row 0 = bottom, flip to image Y-down
+		if src_w <= 0 or src_h <= 0:
+			image = image.unsqueeze(0)
+			if image.max() > 1.0:
+				image = image.clamp(0.0, 255.0) / 255.0
+			else:
+				image = image.clamp(0.0, 1.0)
+			return image
+		ratio = min(self.engine_w / src_w, self.engine_h / src_h)
+		new_w = round(src_w * ratio)
+		new_h = round(src_h * ratio)
 		image = F.interpolate(
 			image.unsqueeze(0),
-			size=(self.engine_h, self.engine_w),
+			size=(new_h, new_w),
 			mode='bilinear',
 			align_corners=False,
 		)
-		# YOLO expects 0-1; TOP may be 0-255 or wrong range
+		dw = self.engine_w - new_w
+		dh = self.engine_h - new_h
+		pad_left = round((dw / 2) - 0.1)
+		pad_right = dw - pad_left
+		pad_top = round((dh / 2) - 0.1)
+		pad_bottom = dh - pad_top
+		image = F.pad(image, (pad_left, pad_right, pad_top, pad_bottom), value=114.0 / 255.0)
 		if image.max() > 1.0:
 			image = image.clamp(0.0, 255.0) / 255.0
 		else:
@@ -163,10 +204,13 @@ class YoloExt:
 			return
 		if self.source is None or self.to_tensor is None or self.stream is None:
 			return
-		# Tensor from TOP, resize to engine size, then predict
+		# Tensor from TOP, letterbox to engine size, then predict
 		self.to_tensor.update(self.stream.cuda_stream)
 		image = torch.as_tensor(self.to_tensor, device=self.device)
+		if not torch.isfinite(image).all():
+			image = torch.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0)
 		image_tensor = self.preprocess_image(image)
+		image_tensor = image_tensor[:, [2, 1, 0], :, :].clone()  # BGR -> RGB
 
 		try:
 			results = self.model.predict(
@@ -181,24 +225,68 @@ class YoloExt:
 			debug(e)
 			return
 
-		# Parse results and fill table1 (x, y, width, height from YOLO xywhn, normalized 0–1)
+		# Parse results: map from model (letterbox 640x640) to original, output in pixels
 		try:
 			tbl = op('table1')
 			tbl.clear()
 			tbl.appendRow(['det_id', 'class', 'confidence', 'x', 'y', 'width', 'height'])
 		except Exception:
 			tbl = None
+		try:
+			tbl_kpt = op('table2')
+		except Exception:
+			tbl_kpt = None
+
 		if results and len(results) > 0 and results[0].boxes is not None and tbl is not None:
+			from ultralytics.utils import ops
 			boxes = results[0].boxes
-			xywhn = boxes.xywhn
-			if hasattr(xywhn, 'cpu'):
-				xywhn = xywhn.cpu().numpy()
-			xywhn = np.asarray(xywhn)
-			for i in range(len(xywhn)):
-				x_norm, y_norm, w_norm, h_norm = float(xywhn[i, 0]), float(xywhn[i, 1]), float(xywhn[i, 2]), float(xywhn[i, 3])
+			keypoints = getattr(results[0], 'keypoints', None)
+			try:
+				in1_top = op('in1')
+				orig_h = int(in1_top.height)
+				orig_w = int(in1_top.width)
+			except Exception:
+				return
+			img0_shape = (orig_h, orig_w)
+			img1_shape = (self.engine_h, self.engine_w)
+			xyxy = boxes.xyxy
+			if hasattr(xyxy, 'cpu'):
+				xyxy = xyxy.cpu().numpy()
+			xyxy = np.asarray(xyxy, dtype=np.float32)
+			if xyxy.size == 0:
+				xyxy_orig = xyxy
+			else:
+				xyxy_orig = ops.scale_boxes(img1_shape, xyxy.copy(), img0_shape)
+			for i in range(len(xyxy_orig)):
+				x1, y1, x2, y2 = float(xyxy_orig[i, 0]), float(xyxy_orig[i, 1]), float(xyxy_orig[i, 2]), float(xyxy_orig[i, 3])
+				x_px = (x1 + x2) / 2
+				y_px = orig_h - (y1 + y2) / 2  # image Y-down -> TD Y-up
+				w_px = x2 - x1
+				h_px = y2 - y1
 				score = boxes.conf[i].item()
 				cls_id = int(boxes.cls[i].item())
-				tbl.appendRow([f"det_{i}", cls_id, score, x_norm, y_norm, w_norm, h_norm])
+				tbl.appendRow([f"det_{i}", cls_id, score, x_px, y_px, w_px, h_px])
+
+			# Pose model: add keypoints to table2 (det_id, kpt_id, x, y, visibility)
+			# Use scale_coords like yolo_pose_test.py — correct letterbox handling for points
+			if tbl_kpt is not None and keypoints is not None and len(keypoints) > 0:
+				tbl_kpt.clear()
+				tbl_kpt.appendRow(['det_id', 'kpt_id', 'x', 'y', 'visibility'])
+				kpt_data = keypoints.data
+				if hasattr(kpt_data, 'cpu'):
+					kpt_data = kpt_data.cpu().numpy()
+				kpt_data = np.asarray(kpt_data, dtype=np.float32)
+				kpt_xy = kpt_data[..., :2].copy()
+				ops.scale_coords(img1_shape, kpt_xy, img0_shape, padding=True)
+				kpt_conf = self.kpt_conf_threshold
+				for i in range(kpt_xy.shape[0]):
+					for k in range(kpt_xy.shape[1]):
+						v = float(kpt_data[i, k, 2]) if kpt_data.shape[-1] >= 3 else 1.0
+						if v < kpt_conf:
+							continue
+						x_px = float(kpt_xy[i, k, 0])
+						y_px = orig_h - float(kpt_xy[i, k, 1])  # image Y-down -> TD Y-up
+						tbl_kpt.appendRow([f"det_{i}", k, x_px, y_px, v])
 
 	def about(self, endpoint):
 		if endpoint == 'Urlg':

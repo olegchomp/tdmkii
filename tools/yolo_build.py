@@ -25,6 +25,7 @@ def build_yolo_engine(
     data: str | None,
     fraction: float,
     engine_output_dir: str | Path,
+    task: str | None = None,
     progress_callback: Callable[[float, str], None] | None = None,
     log_fn: Callable[[str], None] | None = None,
 ) -> Path:
@@ -46,11 +47,27 @@ def build_yolo_engine(
     if progress_callback:
         progress_callback(0.0, "Loading model...")
     model_spec = (model_spec or "yolo11n.pt").strip()
+    # Fix common typo: yolo8n -> yolov8n (Ultralytics expects yolov8n-seg.pt)
+    if model_spec.startswith("yolo8") and not model_spec.startswith("yolov8"):
+        model_spec = "yolov8" + model_spec[5:]
+    task_str = (task or "").strip().lower() if task else None
+    if task_str and task_str not in ("detect", "segment", "pose", "obb"):
+        task_str = None
+    is_custom_path = "/" in model_spec or "\\" in model_spec or Path(model_spec).exists()
     log(f"Model: {model_spec}")
-    log(f"imgsz={imgsz}, batch={batch}, half={half}, int8={int8}, dynamic={dynamic}")
+    log(f"imgsz={imgsz}, batch={batch}, half={half}, int8={int8}, dynamic={dynamic}" + (f", task={task_str}" if task_str else ""))
 
-    model = YOLO(model_spec)
+    # Only pass task for custom paths; standard names (yolo8n-pose.pt etc) let Ultralytics auto-download & infer
+    model = YOLO(model_spec, task=task_str) if (task_str and is_custom_path) else YOLO(model_spec)
     model_stem = Path(model_spec).stem if "/" in model_spec or "\\" in model_spec else model_spec.replace(".pt", "")
+
+    # Copy .pt file to engine_output_dir (Ultralytics caches in ~/.config/Ultralytics or similar)
+    inner = getattr(model, "model", None)
+    pt_source = getattr(model, "ckpt_path", None) or (getattr(inner, "pt_path", None) if inner else None)
+    pt_dest = engine_output_dir / f"{model_stem}.pt"
+    if pt_source and Path(pt_source).exists() and Path(pt_source).resolve() != pt_dest.resolve():
+        shutil.copy2(pt_source, pt_dest)
+        log(f"Model copied: {pt_dest}")
 
     export_kwargs = {
         "format": "engine",
@@ -71,13 +88,20 @@ def build_yolo_engine(
         progress_callback(0.2, "Exporting to TensorRT engine...")
     log("Exporting (this may take several minutes)...")
 
-    # Export into engine_output_dir so artifacts don't end up in project root
-    orig_cwd = os.getcwd()
+    # Force export output to engine_output_dir (Ultralytics otherwise saves next to cached .pt)
+    engine_base = engine_output_dir / f"{model_stem}.pt"
+    old_pt_path = None
+    inner = getattr(model, "model", model)
+    if hasattr(inner, "pt_path") and inner.pt_path:
+        old_pt_path = inner.pt_path
+        inner.pt_path = str(engine_base)
+
     try:
-        os.chdir(engine_output_dir)
         result_path = model.export(**export_kwargs)
     finally:
-        os.chdir(orig_cwd)
+        if old_pt_path is not None and hasattr(inner, "pt_path"):
+            inner.pt_path = old_pt_path
+
     result_path = Path(result_path)
     if not result_path.is_absolute():
         result_path = (engine_output_dir / result_path).resolve()
@@ -94,13 +118,27 @@ def build_yolo_engine(
     if result_path.resolve() != dest_path.resolve():
         if progress_callback:
             progress_callback(0.9, "Copying engine to output dir...")
-        shutil.copy2(result_path, dest_path)
         if result_path.exists():
+            shutil.copy2(result_path, dest_path)
             try:
                 result_path.unlink()
             except OSError:
                 pass
-        log(f"Engine saved: {dest_path}")
+            log(f"Engine saved: {dest_path}")
+        else:
+            # Fallback: engine may be in engine_output_dir under different name
+            candidates = list(engine_output_dir.glob("*.engine"))
+            if candidates:
+                best = max(candidates, key=lambda p: p.stat().st_mtime)
+                if best != dest_path:
+                    shutil.copy2(best, dest_path)
+                    try:
+                        best.unlink()
+                    except OSError:
+                        pass
+                log(f"Engine saved: {dest_path}")
+            else:
+                raise FileNotFoundError(f"Engine not found at {result_path}; export may have failed")
     else:
         log(f"Engine saved: {dest_path}")
 
