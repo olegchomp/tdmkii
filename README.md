@@ -121,3 +121,11 @@ UI: **http://0.0.0.0:7861**
 - **Depth Anything:** `engines/depth/*.engine`, checkpoints in `checkpoints/`.
 - **YOLO:** `engines/yolo/*.engine`.
 
+## Acknowledgement
+Based on the following projects:
+* [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion) - Pipeline-Level Solution for Real-Time Interactive Generation
+* [StreamDiffusion (Daydream)](https://github.com/daydreamlive/StreamDiffusion) - SDXL, ControlNet, IP-Adapter, TensorRT tooling
+* [TopArray](https://github.com/IntentDev/TopArray) - Interaction between Python/PyTorch tensor operations and TouchDesigner TOPs.
+* [Depth-Anything](https://github.com/LiheYoung/Depth-Anything) - Unleashing the Power of Large-Scale Unlabeled Data.
+* [Depth-Anything TensorRT C++](https://github.com/spacewalk01/depth-anything-tensorrt) - Leveraging the TensorRT API for efficient real-time inference.
+* [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) - Object detection, segmentation, pose estimation; TensorRT export used in the YOLO tab.
