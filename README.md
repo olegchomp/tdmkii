@@ -1,7 +1,5 @@
 # TouchDiffusion MKII
 
-**Repo:** [github.com/olegchomp/tdmkii](https://github.com/olegchomp/tdmkii)
-
 Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML configs. Inference runs in a separate process (e.g. TouchDesigner `toe/` or your script).
 
 **Tabs:**
@@ -18,7 +16,7 @@ Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML 
 
 ## Requirements
 
-- Python 3.x, CUDA, NVIDIA GPU
+- Python 3.11.*, CUDA, NVIDIA GPU
 - **Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`. `_diffusers_main/` is in the repo for the Flux Klein tab; if missing, run `git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`.
 
 ---
