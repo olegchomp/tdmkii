@@ -16,21 +16,50 @@ Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML 
 
 ## Requirements
 
-- Python 3.11.*, CUDA, NVIDIA GPU
-- **PyTorch** with CUDA: install separately (see [requirements.txt](requirements.txt)).
-- **TensorRT**: in requirements via NVIDIA index (CUDA 12); for CUDA 11 run `python -m streamdiffusion.tools.install-tensorrt --cu 11` from repo root.
-- Then: `pip install -r requirements.txt`
+- Python 3.x, CUDA, NVIDIA GPU
+- **Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`. `_diffusers_main/` is in the repo for the Flux Klein tab; if missing, run `git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`.
 
-**Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`.
+---
 
-**Flux Klein only:** Uses `_diffusers_main/` in the repo root (clone of huggingface/diffusers); `diffusers_flux2` loads `Flux2KleinPipeline` from there. The folder is already in the repo. If it’s missing, clone once: `git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`. Other tabs do not need it.
+## Installation (Windows)
+
+1. **Clone the repo** (if you don’t have it):
+   ```bash
+   git clone <repo-url> TouchDiffusionMKII
+   cd TouchDiffusionMKII
+   ```
+
+2. **Create and activate a virtual environment** in the project folder:
+   ```batch
+   python -m venv .venv
+   .venv\Scripts\activate
+   ```
+
+3. **Install PyTorch with CUDA** (match your CUDA version; see [requirements.txt](requirements.txt)):
+   ```bash
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+   ```
+   For CUDA 11.8 use `cu118`, for CUDA 12.4 use `cu124`, etc.
+
+4. **Install dependencies:**
+   ```batch
+   pip install -r requirements.txt
+   ```
+   (TensorRT for CUDA 12 is in requirements. On CUDA 11 you need to install TensorRT separately, e.g. via StreamDiffusion’s `install-tensorrt` script.)
+
+5. **Run the app** (with venv activated): `run.bat` (uses `.venv` in the project root).
+
+   UI: **http://0.0.0.0:7861**
 
 ---
 
 ## Run
 
-- **Windows:** `run.bat`
-- **Else:** from repo root with venv: `python -m gradio webui.py`
+From the repo root (venv can be activated or use `run.bat` which uses `.venv` automatically):
+
+```batch
+run.bat
+```
 
 UI: **http://0.0.0.0:7861**
 
