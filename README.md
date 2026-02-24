@@ -23,13 +23,7 @@ Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML 
 
 **Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`.
 
-**Flux Klein only:** Vendored `diffusers_flux2` imports `Flux2KleinPipeline` from Hugging Face diffusers. One-time clone in repo root:
-
-```bash
-git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main
-```
-
-Without `_diffusers_main`, only the Flux Klein tab fails; other tabs are independent.
+**Flux Klein only:** Uses `_diffusers_main/` in the repo root (clone of huggingface/diffusers); `diffusers_flux2` loads `Flux2KleinPipeline` from there. The folder is already in the repo. If it’s missing, clone once: `git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`. Other tabs do not need it.
 
 ---
 
@@ -49,7 +43,7 @@ UI: **http://0.0.0.0:7861**
 | [webui.py](webui.py) | Gradio app: all tabs, `do_build` / `do_build_flux_klein` / `do_build_depth` / `do_build_yolo` |
 | [tools/](tools/) | Build scripts: `flux_klein_build.py`, `depth_anything_build.py`, `yolo_build.py` |
 | `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/` | Vendored; on `sys.path` from webui |
-| `_diffusers_main/` | Optional clone of huggingface/diffusers (Flux Klein only) |
+| `_diffusers_main/` | In repo: clone of huggingface/diffusers (Flux Klein tab only) |
 | `toe/` | TouchDesigner components (inference) |
 | `engines/` | TRT output: `sd/<model_slug>/`, `flux_klein/`, `depth/`, `yolo/` |
 | `checkpoints/` | Depth Anything `.pth` (next to `engines/`) |
@@ -98,4 +92,3 @@ UI: **http://0.0.0.0:7861**
 - **Depth Anything:** `engines/depth/*.engine`, checkpoints in `checkpoints/`.
 - **YOLO:** `engines/yolo/*.engine`.
 
-For a fully pinned env: [requirements-freeze.txt](requirements-freeze.txt) (from project venv; excludes vendored/editable paths).
