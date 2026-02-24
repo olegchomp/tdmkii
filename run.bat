@@ -1,4 +1,4 @@
 @echo off
-cd /d d:\TouchDiffusionMKII
-"d:\TouchDiffusionMKII\.venv\Scripts\python.exe" -m gradio webui.py
+cd /d "%~dp0"
+"%~dp0.venv\Scripts\python.exe" -m gradio webui.py
 pause
