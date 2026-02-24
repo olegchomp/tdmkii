@@ -1,9 +1,3 @@
-'''
-Flux Klein 4B — TouchDesigner extension for image editing via TRT engines.
-Load pipeline by Pulse par "Loadengine". Inference runs when par Inference = True.
-Input: null1 (image), Output: scriptOp (Script TOP).
-Params: Venvpath, Configfile, Loadengine, Inference, Prompt, Steps (1-8, default 4).
-'''
 import os
 import gc
 import sys
@@ -13,17 +7,24 @@ import numpy as np
 import torch
 import webbrowser
 
+from TDStoreTools import StorageManager
+
 
 class FluxKleinExt:
 	def __init__(self, ownerComp):
 		self.ownerComp = ownerComp
+		storedItems = [
+			{'name': 'Width', 'default': 512},
+			{'name': 'Height', 'default': 512}
+		]
+		self.stored = StorageManager(self, ownerComp, storedItems)
+		self.w = int(self.stored.get('Width', 512))
+		self.h = int(self.stored.get('Height', 512))
 		self._set_dimensions('')
 		self.device = 'cuda'
 		self.pipe = None
 		self.stream = None
 		self.trt_engines = {}
-		self.w = 512
-		self.h = 512
 		self.rgba_tensor = None
 		self.output_interface = None
 		self.to_tensor = None
@@ -65,7 +66,7 @@ class FluxKleinExt:
 			return
 
 		repo = Path(venv_path)
-		config_path = repo / config_file if not Path(config_file).is_absolute() else Path(config_file)
+		config_path = Path(f"{repo}/engines/flux_klein/{Path(config_file).name}")
 		if not config_path.exists():
 			debug(f"Config not found: {config_path}")
 			return
@@ -79,8 +80,10 @@ class FluxKleinExt:
 			with open(config_path) as f:
 				cfg = yaml.safe_load(f)
 
-			self.w = cfg.get('width', 512)
-			self.h = cfg.get('height', 512)
+			self.w = int(cfg.get('width', 512))
+			self.h = int(cfg.get('height', 512))
+			self.stored['Width'] = self.w
+			self.stored['Height'] = self.h
 			tr_path = Path(cfg['transformer_engine'])
 			vae_dec_path = Path(cfg['vae_engine'])
 			vae_enc_path = Path(cfg['vae_encoder_engine']) if cfg.get('vae_encoder_engine') else None
