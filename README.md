@@ -1,5 +1,7 @@
 # TouchDiffusion MKII
 
+**Repo:** [github.com/olegchomp/tdmkii](https://github.com/olegchomp/tdmkii)
+
 Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML configs. Inference runs in a separate process (e.g. TouchDesigner `toe/` or your script).
 
 **Tabs:**
@@ -25,7 +27,7 @@ Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML 
 
 1. **Clone the repo** (if you don’t have it):
    ```bash
-   git clone <repo-url> TouchDiffusionMKII
+   git clone https://github.com/olegchomp/tdmkii TouchDiffusionMKII
    cd TouchDiffusionMKII
    ```
 
