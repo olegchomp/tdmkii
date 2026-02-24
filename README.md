@@ -17,8 +17,7 @@ Single Gradio app ([webui.py](webui.py)) to build **TensorRT engines** and YAML 
 ## Requirements
 
 - Python 3.11.*, CUDA, NVIDIA GPU
-- **Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`. `_diffusers_main/` is in the repo for the Flux Klein tab; if missing, run `git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`.
-
+- **Vendored in repo (no pip install):** `StreamDiffusion/`, `diffusers_ipadapter/`, `diffusers_flux2/`. `_diffusers_main/` 
 ---
 
 ## Installation (Windows)
