@@ -23,10 +23,8 @@ class sdExt:
 		self._has_ipadapter = False
 		self.ipadapter_style_key = "ipadapter_main"
 
-		# Путь к репо (Venvpath = корень проекта с StreamDiffusion и diffusers_ipadapter)
 		venv_path = Path(parent().par.Venvpath.val)
 		self.repo_root = venv_path
-		# Сначала корень репо — чтобы использовался vendored diffusers_ipadapter
 		if str(venv_path) not in sys.path:
 			sys.path.insert(0, str(venv_path))
 		sd_src = venv_path / "StreamDiffusion" / "src"
@@ -63,9 +61,8 @@ class sdExt:
 
 			self.config["compile_engines_only"] = False
 			self.config["build_engines_if_missing"] = False
-			self.config["output_type"] = "pt"  # GPU tensor, без конвертации в PIL
+			self.config["output_type"] = "pt"
 
-			# engine_dir относительный — делаем абсолютным от корня проекта
 			engine_dir = self.config.get("engine_dir", "engines")
 			if not Path(engine_dir).is_absolute():
 				self.config["engine_dir"] = str(self.repo_root / engine_dir)
@@ -109,7 +106,6 @@ class sdExt:
 			self.log("Error", e)
 
 	def _sync_params_after_config(self):
-		"""Применить к pipeline текущие значения параметров из UI после загрузки конфига."""
 		if self.stream is None:
 			return
 		try:
@@ -261,7 +257,6 @@ class sdExt:
 	# ── Runtime parameter updates ────────────────────────────
 
 	def _collect_prompts(self):
-		"""Собираем все непустые блоки из sequence Prompts."""
 		seq = parent().seq.Prompts
 		prompt_list = []
 		for block in seq:
@@ -272,7 +267,6 @@ class sdExt:
 		return prompt_list
 
 	def update_prompts(self):
-		"""Полное обновление промптов (текст + веса, перекодирует)."""
 		if self.stream is None:
 			return
 		prompt_list = self._collect_prompts()
@@ -284,7 +278,6 @@ class sdExt:
 			self.stream.update_prompt(prompt_list)
 
 	def update_prompt_weights(self):
-		"""Обновляем только веса (без перекодирования промптов)."""
 		if self.stream is None:
 			return
 		prompt_list = self._collect_prompts()
@@ -332,8 +325,6 @@ class sdExt:
 				pass
 
 	def update_denoise(self, strength: float):
-		"""Пересчёт t_index_list из float 0‑1.
-		0 = оригинал (индексы у конца), 1 = макс. денойз (индексы от начала)."""
 		if self.stream is None:
 			return
 		strength = max(0.0, min(1.0, strength))

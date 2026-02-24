@@ -1,7 +1,6 @@
 """
 Gradio UI for StreamDiffusion model preparation.
 Builds TRT engines and saves YAML config. Inference is handled by a separate script.
-engines/sd/<model_slug>/ — движки и config.yaml
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 STREAMDIFFUSION_SRC = REPO_ROOT / "StreamDiffusion" / "src"
-# Vendored diffusers_ipadapter (with PyTorch 2.6+ weights_only=False) must be found first
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 if str(STREAMDIFFUSION_SRC) not in sys.path:
@@ -81,19 +79,13 @@ THEME = gr.themes.Base(
 )
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
 def _model_slug(model_id: str) -> str:
-    """Преобразует model_id в имя папки: stabilityai/sd-turbo -> stabilityai_sd-turbo"""
     mid = (model_id or "stabilityai/sd-turbo").strip()
     slug = mid.replace("/", "_").replace("\\", "_")
     return re.sub(r"[^\w\-.]", "_", slug) or "model"
 
 
 def _config_name(cfg: dict) -> str:
-    """Уникальное имя конфига из ключевых запекаемых параметров.
-    Пример: config_lcm_4steps_self_512x512.yaml
-    """
     parts = [
         "config",
         cfg.get("consistency_lora", "lcm"),
@@ -104,13 +96,11 @@ def _config_name(cfg: dict) -> str:
     return "_".join(parts) + ".yaml"
 
 
-# Consistency LoRA по модели и scheduler (вшиваются в engine — переключить нельзя)
 LCM_LORA = {"sd15": "latent-consistency/lcm-lora-sdv1-5", "sdxl": "latent-consistency/lcm-lora-sdxl"}
 TCD_LORA = {"sd15": "h1t/TCD-SD15-LoRA", "sd21": "h1t/TCD-SD21-base-LoRA", "sdxl": "h1t/TCD-SDXL-LoRA"}
 
 
 def _model_tier(model_id: str) -> str:
-    """sd15 / sd21 / sdxl по model_id."""
     mid = (model_id or "").lower()
     if "sdxl" in mid or "xl-base" in mid:
         return "sdxl"
@@ -120,7 +110,6 @@ def _model_tier(model_id: str) -> str:
 
 
 
-# IP-Adapter: дефолтные варианты (HF); юзер может вписать свой путь
 IP_ADAPTER_CHOICES = [
     ("SD 1.5 — base", "h94/IP-Adapter/models/ip-adapter_sd15.safetensors"),
     ("SD 1.5 — plus", "h94/IP-Adapter/models/ip-adapter-plus_sd15.safetensors"),
@@ -138,7 +127,6 @@ IP_ENCODER_CHOICES = [
 ]
 _IP_ENCODER_MAP = {label: val for label, val in IP_ENCODER_CHOICES}
 
-# Runtime-параметры — хардкод в config.yaml (меняются в инференс-скрипте)
 RUNTIME_DEFAULTS = {
     "sampler": "normal",
     "guidance_scale": 1.2,
@@ -146,11 +134,10 @@ RUNTIME_DEFAULTS = {
     "prompt": "",
     "negative_prompt": "blurry, low quality",
     "seed": 2,
-    "conditioning_scale": 1.0,  # ControlNet
+    "conditioning_scale": 1.0,
     "ipadapter_scale": 0.7,
 }
 
-# Пресеты t_index по числу шагов (img2img: от частично зашумлённого входа)
 DENOISE_PRESETS = {
     1: [45],
     2: [35, 45],
@@ -164,7 +151,6 @@ DENOISE_PRESETS = {
 
 
 def _steps_to_t_index_list(steps: int) -> list[int]:
-    """Число шагов → t_index_list (как Steps в ComfyUI)."""
     steps = max(1, min(8, int(steps)))
     return DENOISE_PRESETS[steps]
 
@@ -182,7 +168,7 @@ def ui_to_config(
     engine_dir = f"{base}/sd/{slug}"
 
     t_index_list = _steps_to_t_index_list(int(denoise_steps))
-    batch = len(t_index_list)  # frame_buffer_size=1, min=max=batch
+    batch = len(t_index_list)
 
     rt = RUNTIME_DEFAULTS
     cfg_scheduler = "lcm" if scheduler == "none" else scheduler
@@ -194,8 +180,8 @@ def ui_to_config(
         "cfg_type": cfg_type,
         "use_tiny_vae": True,
         "frame_buffer_size": 1,
-        "consistency_lora": scheduler,        # lcm/tcd/none — что выбрал пользователь
-        "scheduler_locked": scheduler_locked,  # True = LoRA запечена, scheduler менять нельзя
+        "consistency_lora": scheduler,
+        "scheduler_locked": scheduler_locked,
         "scheduler": cfg_scheduler, "sampler": rt["sampler"],
         "device": "cuda", "dtype": "float16", "acceleration": "tensorrt",
         "engine_dir": engine_dir,
@@ -208,13 +194,11 @@ def ui_to_config(
         "num_inference_steps": 50, "seed": rt["seed"],
         "t_index_list": t_index_list,
     }
-    # Build lora_dict: style LoRAs from UI slots + consistency LoRA from scheduler
     ld = {}
     for lid, lsc in [(lora0_id, lora0_scale), (lora1_id, lora1_scale), (lora2_id, lora2_scale)]:
         name = str(lid).strip() if lid else ""
         if name:
             ld[name] = float(lsc) if lsc is not None else 1.0
-    # Add consistency LoRA (invisible to user)
     if scheduler != "none":
         tier = _model_tier(model_id)
         if scheduler == "tcd":
@@ -255,7 +239,6 @@ def ui_to_config(
 
 
 def _sanitize_config_name(name: str) -> str:
-    """Очистить имя файла: только буквы, цифры, дефис, подчёркивание."""
     s = str(name).strip()
     if not s:
         return ""
@@ -269,14 +252,12 @@ def do_build(*args, progress=gr.Progress()):
         config_name_input = args[-1]
         cfg = ui_to_config(*args[:-1])
 
-        # ── 1. Сборка TRT engines ──────────────────────────────
         cfg["compile_engines_only"] = True
         progress(0.1, desc="Building TRT engines...")
         from streamdiffusion.config import create_wrapper_from_config, save_config
         import contextlib, torch
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             build_wrapper = create_wrapper_from_config(cfg)
-        # Free VRAM after compilation
         del build_wrapper
         torch.cuda.empty_cache()
 
@@ -285,7 +266,6 @@ def do_build(*args, progress=gr.Progress()):
         save_config(cfg, str(config_path))
         build_log = buf.getvalue()
 
-        # ── 2. Тестовый инференс ────────────────────────────────
         progress(0.8, desc="Test inference...")
         from PIL import Image
         test_cfg = dict(cfg)
@@ -303,7 +283,6 @@ def do_build(*args, progress=gr.Progress()):
             guidance_scale=cfg.get("guidance_scale", 1.2),
             delta=cfg.get("delta", 1.0),
         )
-        # Warmup: fill denoising batch
         for _ in range(wrapper.stream.batch_size):
             wrapper.img2img(black)
         result = wrapper.img2img(black)
@@ -361,8 +340,8 @@ def do_build_depth(
             log_fn=log,
         )
         log(f"✓ Engine: {engine_path}")
-        log("Имя движка: {имя_чекпоинта}_{width}x{height}.engine (напр. depth_anything_vits14_518x518.engine).")
-        log("Использование: engine_path в DepthAnythingTensorrtPreprocessor, detect_resolution = размер входа движка.")
+        log("Engine name: {checkpoint_name}_{width}x{height}.engine (e.g. depth_anything_vits14_518x518.engine).")
+        log("Use engine_path in DepthAnythingTensorrtPreprocessor, detect_resolution = engine input size.")
         return buf.getvalue() + "✓ Done."
     except Exception:
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
@@ -424,7 +403,7 @@ def do_build_yolo(
             log_fn=log,
         )
         log(f"✓ Engine: {engine_path}")
-        log("Движки сохраняются в engines/yolo/. Имя: {model}_{h}x{w}_b{batch}[_fp16].engine")
+        log("Engines saved to engines/yolo/. Name: {model}_{h}x{w}_b{batch}[_fp16].engine")
         return buf.getvalue() + "✓ Done."
     except Exception:
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
@@ -470,14 +449,11 @@ def do_build_flux_klein(flux_width, flux_height, progress=gr.Progress()):
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
 
 
-# ── UI ───────────────────────────────────────────────────────────────────────
-
 def build_app():
     with gr.Blocks(title="StreamDiffusion Prep", css=CSS, theme=THEME) as app:
         with gr.Tabs():
             with gr.Tab("StreamDiffusion"):
                 with gr.Row():
-                    # ╔════════════════════ LEFT COLUMN ════════════════════╗
                     with gr.Column(scale=1):
 
                         with gr.Group():
@@ -520,7 +496,6 @@ def build_app():
                                 lora2_id = gr.Textbox("", label="#2 model_id", scale=3)
                                 lora2_scale = gr.Number(1.0, label="scale", minimum=0, maximum=2, step=0.05, scale=1)
 
-                    # ╔════════════════════ RIGHT COLUMN ═══════════════════╗
                     with gr.Column(scale=1):
 
                         with gr.Group():
@@ -560,7 +535,6 @@ def build_app():
                             cached_attn = gr.Checkbox(False, label="Cached attn")
                             cache_frames = gr.Slider(1, 16, 1, step=1, label="Cache max frames")
 
-                    # ╔════════════════════ THIRD COLUMN: Output ═══════════════════╗
                     with gr.Column(scale=1):
                         with gr.Group():
                             gr.Markdown("**Output**", elem_classes=["sec-title"])
@@ -599,10 +573,10 @@ def build_app():
                     with gr.Column(scale=1):
                         flux_engines_dir = REPO_ROOT / "engines" / "flux_klein"
                         gr.Markdown(
-                            f"**Движки:** `{flux_engines_dir}`\n\n"
-                            "Требуется `_diffusers_main` (diffusers main):\n"
+                            f"**Engines:** `{flux_engines_dir}`\n\n"
+                            "Requires `_diffusers_main` (diffusers main):\n"
                             "`git clone --depth 1 https://github.com/huggingface/diffusers.git _diffusers_main`\n\n"
-                            "Flux Klein: BF16, img2img. Workspace — auto. Выход: transformer, vae_encoder, vae_decoder engines.",
+                            "Flux Klein: BF16, img2img. Workspace — auto. Output: transformer, vae_encoder, vae_decoder engines.",
                             elem_classes=["sec-title"],
                         )
                 flux_btn_build.click(
@@ -625,7 +599,7 @@ def build_app():
                                 [("Small", "s"), ("Base", "b"), ("Large", "l")],
                                 value="s",
                                 label="Size",
-                                info="v1: Small/Base/Large; v2: + Giant (пока не на HF)",
+                                info="v1: Small/Base/Large; v2: + Giant (not on HF yet)",
                             )
                         with gr.Group():
                             gr.Markdown("**Resolution**", elem_classes=["sec-title"])
@@ -640,9 +614,9 @@ def build_app():
                             depth_log = gr.Textbox(label="Log", lines=10, max_lines=24, interactive=False, elem_classes=["log"])
                 depth_engines_dir = REPO_ROOT / "engines" / "depth"
                 gr.Markdown(
-                    f"**Чекпоинты:** `checkpoints/` (на уровне с `engines/`). "
-                    f"**Движки:** `{depth_engines_dir}`. "
-                    "Имя файла движка: **{имя_чекпоинта}_{width}x{height}.engine** (напр. `depth_anything_vits14_518x518.engine`, `depth_anything_v2_vits_518x518.engine`)."
+                    f"**Checkpoints:** `checkpoints/` (next to `engines/`). "
+                    f"**Engines:** `{depth_engines_dir}`. "
+                    "Engine filename: **{checkpoint_name}_{width}x{height}.engine** (e.g. `depth_anything_vits14_518x518.engine`, `depth_anything_v2_vits_518x518.engine`)."
                 )
 
                 def depth_version_change(ver):
@@ -725,9 +699,9 @@ def build_app():
                             yolo_log = gr.Textbox(label="Log", lines=10, max_lines=24, interactive=False, elem_classes=["log"])
                 yolo_engines_dir = REPO_ROOT / "engines" / "yolo"
                 gr.Markdown(
-                    f"**Движки:** `{yolo_engines_dir}`. "
-                    "Имя: **{model_stem}_{height}x{width}_b{batch}[_fp16].engine**. "
-                    "Официальные модели (yolo11n.pt и т.д.) скачиваются при первом запуске."
+                    f"**Engines:** `{yolo_engines_dir}`. "
+                    "Name: **{model_stem}_{height}x{width}_b{batch}[_fp16].engine**. "
+                    "Official models (yolo11n.pt etc.) download on first run."
                 )
                 yolo_btn_build.click(
                     fn=do_build_yolo,
@@ -752,7 +726,6 @@ def build_app():
     return app
 
 
-# Must be at module level for `gradio gradio_prepare.py` (reload mode)
 demo = build_app()
 
 if __name__ == "__main__":

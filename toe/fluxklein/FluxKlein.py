@@ -170,7 +170,7 @@ class FluxKleinExt:
 			except Exception:
 				self.prompt = 'make it sunset'
 		elif par.name == 'Steps':
-			pass  # read in run()
+			pass
 
 	def _steps(self):
 		try:
@@ -185,7 +185,7 @@ class FluxKleinExt:
 			image = image.clamp(0, 255) / 255.0
 		else:
 			image = image.clamp(0, 1)
-		image = torch.flip(image, [1])  # TD Y-up -> image Y-down
+		image = torch.flip(image, [1])
 		return image.unsqueeze(0)
 
 	def _postprocess(self, out_tensor):
@@ -193,8 +193,8 @@ class FluxKleinExt:
 		if out_tensor.dim() == 4:
 			out_tensor = out_tensor.squeeze(0)
 		out_tensor = out_tensor.clamp(0, 1)
-		out_tensor = torch.flip(out_tensor, [1])  # image Y-down -> TD Y-up
-		out_tensor = out_tensor.permute(1, 2, 0)  # (C,H,W) -> (H,W,C)
+		out_tensor = torch.flip(out_tensor, [1])
+		out_tensor = out_tensor.permute(1, 2, 0)
 		self.rgba_tensor[..., :3] = out_tensor
 		return self.rgba_tensor
 

@@ -9,7 +9,6 @@ class DepthAnythingExt:
 	def __init__(self, ownerComp):
 		self.ownerComp = ownerComp
 		self.ownerComp.par.Dimensions = ''
-		"""Initialize TensorRT plugins, engine and conetxt."""
 		env_path = self.ownerComp.par.Venvpath.val or ""
 		engine_file = self.ownerComp.par.Enginefile.val or ""
 		self.trt_path = os.path.normpath(os.path.join(env_path, "engines", "depth", engine_file))
