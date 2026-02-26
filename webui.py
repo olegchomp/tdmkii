@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import traceback
+import warnings
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -19,6 +20,17 @@ if str(STREAMDIFFUSION_SRC) not in sys.path:
     sys.path.insert(0, str(STREAMDIFFUSION_SRC))
 
 import gradio as gr
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"The 'theme' parameter in the Blocks constructor",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"The 'css' parameter in the Blocks constructor",
+)
 
 DEFAULT_MODELS = [
     "stabilityai/sd-turbo",
