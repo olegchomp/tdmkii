@@ -743,10 +743,11 @@ def build_app():
                     "Git: fetch + reset --hard to origin. Pip: into embedded Python (no venv); PyTorch CUDA 12 (cu121) automatically. Then verify imports."
                 )
 
-                def do_install_update(python_path: str) -> str:
+                def do_install_update(python_path: str, progress: gr.Progress = gr.Progress()) -> str:
                     path = (python_path or "").strip()
                     py_exe = Path(path) if path else None
-                    return run_install_update(REPO_ROOT, py_exe, cuda_ver="cu121")
+                    progress_cb = (lambda p, d: progress(p, desc=d)) if progress else None
+                    return run_install_update(REPO_ROOT, py_exe, cuda_ver="cu121", progress_callback=progress_cb)
 
                 settings_btn.click(
                     fn=do_install_update,

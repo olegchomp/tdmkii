@@ -22,6 +22,7 @@ def _default_git_exe(repo_root: Path) -> Path:
 def _log(lines: list[str], msg: str, log_fn: Optional[Callable[[str], None]]) -> None:
     line = msg.rstrip()
     lines.append(line)
+    print(line)
     if log_fn:
         log_fn(line)
 
@@ -33,22 +34,23 @@ def _run(
     log_fn: Optional[Callable[[str], None]],
     env: Optional[dict] = None,
 ) -> int:
-    """Run command, stream stdout/stderr to log, return returncode."""
+    """Run command, stream stdout/stderr to console and log in real time, return returncode."""
     _log(lines, f"> {' '.join(args)}", log_fn)
-    r = subprocess.run(
+    proc = subprocess.Popen(
         args,
         cwd=cwd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         env=env,
+        bufsize=1,
     )
-    if r.stdout:
-        for l in r.stdout.rstrip().splitlines():
-            _log(lines, l, log_fn)
-    if r.stderr:
-        for l in r.stderr.rstrip().splitlines():
-            _log(lines, l, log_fn)
-    return r.returncode
+    assert proc.stdout is not None
+    for line in iter(proc.stdout.readline, ""):
+        line = line.rstrip()
+        if line:
+            _log(lines, line, log_fn)
+    return proc.wait()
 
 
 def run_install_update(
@@ -57,6 +59,7 @@ def run_install_update(
     git_exe: Optional[Union[Path, str]] = None,
     cuda_ver: str = "cu121",
     log_fn: Optional[Callable[[str], None]] = None,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> str:
     """
     Run: 1) git fetch + reset --hard to origin, 2) pip install into embedded Python,
@@ -87,6 +90,8 @@ def run_install_update(
         return "\n".join(lines)
 
     # --- Step 1: Git hard reset (GitPython, portable git) ---
+    if progress_callback:
+        progress_callback(0.05, "Git...")
     log("--- Git: fetch + reset --hard (portable git) ---")
     if git_bin.is_file():
         os.environ["GIT_PYTHON_GIT_EXECUTABLE"] = str(git_bin)
@@ -113,10 +118,12 @@ def run_install_update(
                 log(f"Git error: {e}")
     log("")
 
+    if progress_callback:
+        progress_callback(0.15, "pip upgrade...")
     # --- Step 2: pip (always via python -m pip) ---
     log("--- pip: upgrade pip ---")
     rc = _run(
-        [str(py_exe), "-m", "pip", "install", "--upgrade", "pip"],
+        [str(py_exe), "-m", "pip", "install", "--upgrade", "pip", "--no-warn-script-location"],
         cwd=repo_root,
         lines=lines,
         log_fn=log_fn,
@@ -125,11 +132,14 @@ def run_install_update(
         log(f"pip upgrade returned {rc}")
     log("")
 
+    if progress_callback:
+        progress_callback(0.25, "PyTorch (may take several minutes)...")
     log("--- pip: PyTorch (CUDA) ---")
     rc = _run(
         [
             str(py_exe), "-m", "pip", "install", "torch", "torchvision",
             "--index-url", f"https://download.pytorch.org/whl/{cuda_ver}",
+            "--no-warn-script-location",
         ],
         cwd=repo_root,
         lines=lines,
@@ -139,13 +149,15 @@ def run_install_update(
         log(f"PyTorch install returned {rc}")
     log("")
 
+    if progress_callback:
+        progress_callback(0.5, "requirements.txt...")
     log("--- pip: -r requirements.txt ---")
     req_file = repo_root / "requirements.txt"
     if not req_file.is_file():
         log(f"Warning: {req_file} not found")
     else:
         rc = _run(
-            [str(py_exe), "-m", "pip", "install", "-r", str(req_file)],
+            [str(py_exe), "-m", "pip", "install", "-r", str(req_file), "--no-warn-script-location"],
             cwd=repo_root,
             lines=lines,
             log_fn=log_fn,
@@ -154,11 +166,13 @@ def run_install_update(
             log(f"pip -r requirements.txt returned {rc}")
     log("")
 
+    if progress_callback:
+        progress_callback(0.85, "Verify imports...")
     # --- Step 3: Verify imports ---
     log("--- Verify imports ---")
     imports = [
         "numpy", "yaml", "gradio", "transformers", "diffusers",
-        "accelerate", "PIL", "torch",
+        "accelerate", "PIL", "torch", "tensorrt",
     ]
     code = "; ".join(f"import {m}" for m in imports)
     rc = _run(
@@ -171,6 +185,8 @@ def run_install_update(
         log("Verify imports: OK")
     else:
         log("Verify imports: FAILED")
+    if progress_callback:
+        progress_callback(1.0, "Done")
 
     return "\n".join(lines)
 
