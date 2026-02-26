@@ -725,11 +725,6 @@ def build_app():
 
                 with gr.Row():
                     with gr.Column(scale=1):
-                        settings_python_path = gr.Textbox(
-                            "",
-                            label="Path to Python (embedded)",
-                            placeholder="Leave empty for default: ../python_embeded/python.exe",
-                        )
                         settings_btn = gr.Button("Install & Update", variant="primary", elem_classes=["act-btn"])
                     with gr.Column(scale=1):
                         settings_log = gr.Textbox(
@@ -739,19 +734,14 @@ def build_app():
                             interactive=False,
                             elem_classes=["log"],
                         )
-                gr.Markdown(
-                    "Git: fetch + reset --hard to origin. Pip: into embedded Python (no venv); PyTorch CUDA 12 (cu121) automatically. Then verify imports."
-                )
 
-                def do_install_update(python_path: str, progress: gr.Progress = gr.Progress()) -> str:
-                    path = (python_path or "").strip()
-                    py_exe = Path(path) if path else None
+                def do_install_update(progress: gr.Progress = gr.Progress()) -> str:
                     progress_cb = (lambda p, d: progress(p, desc=d)) if progress else None
-                    return run_install_update(REPO_ROOT, py_exe, cuda_ver="cu121", progress_callback=progress_cb)
+                    return run_install_update(REPO_ROOT, None, cuda_ver="cu121", progress_callback=progress_cb)
 
                 settings_btn.click(
                     fn=do_install_update,
-                    inputs=[settings_python_path],
+                    inputs=[],
                     outputs=[settings_log],
                 )
 
