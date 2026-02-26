@@ -39,5 +39,8 @@ controlnet-aux==0.0.10
 
 # IP-Adapter: vendored in repo (diffusers_ipadapter/), added via sys.path; no pip install.
 
+# Settings / Install & Update tool (git reset via GitPython)
+GitPython>=3.1.0
+
 # Windows
 pywin32==306; sys_platform == 'win32'
