@@ -167,6 +167,23 @@ def run_install_update(
     log("")
 
     if progress_callback:
+        progress_callback(0.7, "StreamDiffusion TensorRT...")
+    log("--- StreamDiffusion: install-tensorrt (cuda-python, cudnn, trt versions) ---")
+    stream_src = repo_root / "StreamDiffusion" / "src"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(stream_src)
+    rc = _run(
+        [str(py_exe), "-m", "streamdiffusion.tools.install-tensorrt"],
+        cwd=repo_root,
+        lines=lines,
+        log_fn=log_fn,
+        env=env,
+    )
+    if rc != 0:
+        log(f"install-tensorrt returned {rc}")
+    log("")
+
+    if progress_callback:
         progress_callback(0.85, "Verify imports...")
     # --- Step 3: Verify imports ---
     log("--- Verify imports ---")

@@ -27,6 +27,10 @@ def install(cu: Optional[Literal["11", "12"]] = get_cuda_major()):
         run_pip(f"install {cudnn_package} --no-cache-dir")
         run_pip(f"install --extra-index-url https://pypi.nvidia.com {trt_package} --no-cache-dir")
 
+    # utilities.py does "from cuda import cudart" — need cuda-python (not in pip deps of this script)
+    if not is_installed("cuda"):
+        run_pip("install cuda-python --no-cache-dir")
+
     if not is_installed("polygraphy"):
         run_pip(
             "install polygraphy==0.49.24 --extra-index-url https://pypi.ngc.nvidia.com"
