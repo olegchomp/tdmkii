@@ -89,34 +89,34 @@ def run_install_update(
         log(f"Error: Python executable not found: {py_exe}")
         return "\n".join(lines)
 
-    # --- Step 1: Git hard reset (GitPython, portable git) ---
-    if progress_callback:
-        progress_callback(0.05, "Git...")
-    log("--- Git: fetch + reset --hard (portable git) ---")
-    if git_bin.is_file():
-        os.environ["GIT_PYTHON_GIT_EXECUTABLE"] = str(git_bin)
-    else:
-        log(f"Warning: portable git not found at {git_bin}; GitPython may use system git")
-    try:
-        import git
-    except ImportError:
-        log("Warning: GitPython not installed; skipping git step. pip install GitPython")
-    else:
-        git_dir = repo_root / ".git"
-        if not git_dir.exists():
-            log("Not a git repo (.git missing); skipping git step.")
-        else:
-            try:
-                repo = git.Repo(repo_root)
-                origin = repo.remotes.origin
-                origin.fetch()
-                branch = repo.active_branch.name
-                ref = f"origin/{branch}"
-                repo.git.reset("--hard", ref)
-                log(f"Reset --hard {ref} OK")
-            except Exception as e:
-                log(f"Git error: {e}")
-    log("")
+    # --- Step 1: Git hard reset (GitPython, portable git) --- [commented out]
+    # if progress_callback:
+    #     progress_callback(0.05, "Git...")
+    # log("--- Git: fetch + reset --hard (portable git) ---")
+    # if git_bin.is_file():
+    #     os.environ["GIT_PYTHON_GIT_EXECUTABLE"] = str(git_bin)
+    # else:
+    #     log(f"Warning: portable git not found at {git_bin}; GitPython may use system git")
+    # try:
+    #     import git
+    # except ImportError:
+    #     log("Warning: GitPython not installed; skipping git step. pip install GitPython")
+    # else:
+    #     git_dir = repo_root / ".git"
+    #     if not git_dir.exists():
+    #         log("Not a git repo (.git missing); skipping git step.")
+    #     else:
+    #         try:
+    #             repo = git.Repo(repo_root)
+    #             origin = repo.remotes.origin
+    #             origin.fetch()
+    #             branch = repo.active_branch.name
+    #             ref = f"origin/{branch}"
+    #             repo.git.reset("--hard", ref)
+    #             log(f"Reset --hard {ref} OK")
+    #         except Exception as e:
+    #             log(f"Git error: {e}")
+    # log("")
 
     if progress_callback:
         progress_callback(0.15, "pip upgrade...")
@@ -147,6 +147,17 @@ def run_install_update(
     )
     if rc != 0:
         log(f"PyTorch install returned {rc}")
+    log("")
+
+    if progress_callback:
+        progress_callback(0.48, "Remove stub 'cuda' if present...")
+    log("--- pip: uninstall stub 'cuda' (so cuda-python provides cudart) ---")
+    _run(
+        [str(py_exe), "-m", "pip", "uninstall", "-y", "cuda"],
+        cwd=repo_root,
+        lines=lines,
+        log_fn=log_fn,
+    )
     log("")
 
     if progress_callback:

@@ -21,6 +21,7 @@ omegaconf==2.3.0
 # TRT engine build (gradio_prepare: DepthAnything, YOLO, Flux Klein)
 opencv-python==4.13.0.92
 ultralytics>=8.0.0
+onnxslim>=0.1.71
 onnx==1.18.0
 onnxscript==0.6.2
 onnxruntime==1.23.2

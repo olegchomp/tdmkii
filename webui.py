@@ -175,7 +175,7 @@ def ui_to_config(
     cached_attn, cache_frames,
     denoise_steps,
 ):
-    base = "engines"
+    base = str(REPO_ROOT / "engines")
     slug = _model_slug(model_id)
     engine_dir = f"{base}/sd/{slug}"
 
@@ -416,6 +416,7 @@ def do_build_yolo(
         )
         log(f"✓ Engine: {engine_path}")
         log("Engines saved to engines/yolo/. Name: {model}_{h}x{w}_b{batch}[_fp16].engine")
+        log("✓ YOLO build and test inference complete.")
         return buf.getvalue() + "✓ Done."
     except Exception:
         return buf.getvalue() + "\n✗ " + traceback.format_exc()

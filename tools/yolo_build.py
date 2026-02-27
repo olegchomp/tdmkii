@@ -44,21 +44,36 @@ def build_yolo_engine(
         else:
             print(msg)
 
-    if progress_callback:
-        progress_callback(0.0, "Loading model...")
-    model_spec = (model_spec or "yolo11n.pt").strip()
-    # Fix common typo: yolo8n -> yolov8n (Ultralytics expects yolov8n-seg.pt)
-    if model_spec.startswith("yolo8") and not model_spec.startswith("yolov8"):
-        model_spec = "yolov8" + model_spec[5:]
-    task_str = (task or "").strip().lower() if task else None
-    if task_str and task_str not in ("detect", "segment", "pose", "obb"):
-        task_str = None
-    is_custom_path = "/" in model_spec or "\\" in model_spec or Path(model_spec).exists()
-    log(f"Model: {model_spec}")
-    log(f"imgsz={imgsz}, batch={batch}, half={half}, int8={int8}, dynamic={dynamic}" + (f", task={task_str}" if task_str else ""))
+    # Ultralytics has no download_dir argument (issue #17513); download goes to cwd. Use repo checkpoints dir.
+    yolo_weights_dir = REPO_ROOT / "checkpoints"
+    yolo_weights_dir.mkdir(parents=True, exist_ok=True)
+    from ultralytics.utils import SETTINGS
 
-    # Only pass task for custom paths; standard names (yolo8n-pose.pt etc) let Ultralytics auto-download & infer
-    model = YOLO(model_spec, task=task_str) if (task_str and is_custom_path) else YOLO(model_spec)
+    prev_weights_dir = SETTINGS.get("weights_dir")
+    prev_cwd = os.getcwd()
+    SETTINGS["weights_dir"] = str(yolo_weights_dir)
+    os.chdir(yolo_weights_dir)
+    try:
+        if progress_callback:
+            progress_callback(0.0, "Loading model...")
+        model_spec = (model_spec or "yolo11n.pt").strip()
+        # Fix common typo: yolo8n -> yolov8n (Ultralytics expects yolov8n-seg.pt)
+        if model_spec.startswith("yolo8") and not model_spec.startswith("yolov8"):
+            model_spec = "yolov8" + model_spec[5:]
+        task_str = (task or "").strip().lower() if task else None
+        if task_str and task_str not in ("detect", "segment", "pose", "obb"):
+            task_str = None
+        is_custom_path = "/" in model_spec or "\\" in model_spec or Path(model_spec).exists()
+        log(f"Model: {model_spec}")
+        log(f"imgsz={imgsz}, batch={batch}, half={half}, int8={int8}, dynamic={dynamic}" + (f", task={task_str}" if task_str else ""))
+
+        # Only pass task for custom paths; standard names (yolo8n-pose.pt etc) let Ultralytics auto-download & infer
+        model = YOLO(model_spec, task=task_str) if (task_str and is_custom_path) else YOLO(model_spec)
+    finally:
+        os.chdir(prev_cwd)
+        if prev_weights_dir is not None:
+            SETTINGS["weights_dir"] = prev_weights_dir
+
     model_stem = Path(model_spec).stem if "/" in model_spec or "\\" in model_spec else model_spec.replace(".pt", "")
 
     # Copy .pt file to engine_output_dir (Ultralytics caches in ~/.config/Ultralytics or similar)
@@ -141,6 +156,16 @@ def build_yolo_engine(
                 raise FileNotFoundError(f"Engine not found at {result_path}; export may have failed")
     else:
         log(f"Engine saved: {dest_path}")
+
+    # Test inference on empty input so we have a clear "generation finished" step
+    if progress_callback:
+        progress_callback(0.95, "Test inference...")
+    import numpy as np
+    h, w = (imgsz[0], imgsz[1]) if isinstance(imgsz, tuple) else (imgsz, imgsz)
+    dummy = np.zeros((h, w, 3), dtype=np.uint8)
+    engine_model = YOLO(str(dest_path))
+    _ = engine_model.predict(source=dummy, imgsz=imgsz, half=half, verbose=False)
+    log("✓ Test inference OK — engine runs.")
 
     if progress_callback:
         progress_callback(1.0, "Done")
