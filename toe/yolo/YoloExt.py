@@ -2,7 +2,9 @@
 YoloExt: YOLO inference in TouchDesigner via Ultralytics.
 No auto-load: init only sets up component. Load engine by Pulse par "Loadengine" (parexec -> Loadengine()).
 Inference runs only when par Inference = True.
+Optional: par Tracking (toggle, default on) + par Tracker (bytetrack / botsort) via Ultralytics model.track().
 - table1: detections (det_id, class, confidence, x, y, width, height) in pixels
+  det_id = persistent track id from boxes.id when Tracking is on, else det_0, det_1, ...
 - table2: pose keypoints when using pose model (det_id, kpt_id, x, y, visibility)
 - scriptOp: segment masks (RGBA) when using segment model — combined mask in R,G,B, A=1
 '''
@@ -28,6 +30,31 @@ def _parse_engine_dims(filename):
 	return 640, 640
 
 
+def _par_bool(owner_comp, name, default=False):
+	try:
+		par = getattr(owner_comp.par, name)
+		return bool(par.eval())
+	except Exception:
+		return default
+
+
+def _par_str(owner_comp, name, default=""):
+	try:
+		par = getattr(owner_comp.par, name)
+		val = par.eval() if hasattr(par, "eval") else par.val
+		return str(val or default).strip()
+	except Exception:
+		return default
+
+
+_TRACKER_ALIASES = {
+	"bytetrack": "bytetrack.yaml",
+	"botsort": "botsort.yaml",
+	"bytetrack.yaml": "bytetrack.yaml",
+	"botsort.yaml": "botsort.yaml",
+}
+
+
 class YoloExt:
 	def __init__(self, ownerComp):
 		self.ownerComp = ownerComp
@@ -50,6 +77,10 @@ class YoloExt:
 			self.kpt_conf_threshold = float(self.ownerComp.par.Keypointconfidence.val or 0.25)
 		except Exception:
 			self.kpt_conf_threshold = 0.25
+		self.tracking_enabled = _par_bool(self.ownerComp, "Tracking", True)
+		self.tracker_config = self._resolve_tracker_config(
+			_par_str(self.ownerComp, "Tracker", "bytetrack")
+		)
 
 		try:
 			self.source = op('null1')
@@ -58,9 +89,40 @@ class YoloExt:
 			self.source = None
 			self.to_tensor = None
 
+	def _resolve_tracker_config(self, tracker_name):
+		key = (tracker_name or "bytetrack").strip().lower()
+		return _TRACKER_ALIASES.get(key, "bytetrack.yaml")
+
+	def _reset_tracker(self):
+		predictor = getattr(self.model, "predictor", None) if self.model is not None else None
+		if predictor is not None:
+			predictor.trackers = None
+			if getattr(predictor, "args", None) is not None:
+				predictor.args.persist = False
+
+	def _get_task(self):
+		try:
+			task = str(self.ownerComp.par.Task.eval() or self.ownerComp.par.Task.val or "detect").strip().lower()
+		except Exception:
+			task = "detect"
+		if task not in ("detect", "segment", "classify", "pose", "obb"):
+			return "detect"
+		return task
+
+	def _tracking_active(self):
+		return self.tracking_enabled and self._get_task() != "classify"
+
+	def _det_label(self, boxes, index, tracking):
+		if tracking:
+			box_ids = getattr(boxes, "id", None)
+			if box_ids is not None and len(box_ids) > index and box_ids[index] is not None:
+				return int(box_ids[index].item())
+		return f"det_{index}"
+
 	def Loadengine(self):
 		"""Unload old pipeline, load new engine. Pulse par Loadengine triggers this."""
 		if self.model is not None:
+			self._reset_tracker()
 			del self.model
 			self.model = None
 		self.stream = None
@@ -133,6 +195,15 @@ class YoloExt:
 				self.kpt_conf_threshold = float(par.val or 0.25)
 			except Exception:
 				pass
+		elif par.name == "Tracking":
+			self.tracking_enabled = _par_bool(self.ownerComp, "Tracking", True)
+			self._reset_tracker()
+		elif par.name == "Tracker":
+			self.tracker_config = self._resolve_tracker_config(
+				_par_str(self.ownerComp, "Tracker", "bytetrack")
+			)
+			if self.tracking_enabled:
+				self._reset_tracker()
 
 	def preprocess_image(self, image):
 		"""(C, H, W) -> (1, 3, engine_h, engine_w) with letterbox (proportional scale + pad)."""
@@ -215,14 +286,24 @@ class YoloExt:
 		image_tensor = self.preprocess_image(image)
 		image_tensor = image_tensor[:, [2, 1, 0], :, :].clone()  # BGR -> RGB
 
+		tracking = self._tracking_active()
+		infer_kwargs = {
+			"source": image_tensor,
+			"verbose": False,
+			"save": False,
+			"conf": self.conf_threshold,
+			"iou": self.iou_threshold,
+			"imgsz": (self.engine_h, self.engine_w),
+		}
 		try:
-			results = self.model.predict(
-				source=image_tensor,
-				verbose=False,
-				save=False,
-				conf=self.conf_threshold,
-				iou=self.iou_threshold,
-			)
+			if tracking:
+				results = self.model.track(
+					**infer_kwargs,
+					persist=True,
+					tracker=self.tracker_config,
+				)
+			else:
+				results = self.model.predict(**infer_kwargs)
 			torch.cuda.synchronize()
 		except Exception as e:
 			debug(e)
@@ -268,7 +349,7 @@ class YoloExt:
 				h_px = y2 - y1
 				score = boxes.conf[i].item()
 				cls_id = int(boxes.cls[i].item())
-				tbl.appendRow([f"det_{i}", cls_id, score, x_px, y_px, w_px, h_px])
+				tbl.appendRow([self._det_label(boxes, i, tracking), cls_id, score, x_px, y_px, w_px, h_px])
 
 			# Pose model: add keypoints to table2 (det_id, kpt_id, x, y, visibility)
 			# Use scale_coords like yolo_pose_test.py — correct letterbox handling for points
@@ -289,15 +370,11 @@ class YoloExt:
 							continue
 						x_px = float(kpt_xy[i, k, 0])
 						y_px = orig_h - float(kpt_xy[i, k, 1])  # image Y-down -> TD Y-up
-						tbl_kpt.appendRow([f"det_{i}", k, x_px, y_px, v])
+						tbl_kpt.appendRow([self._det_label(boxes, i, tracking), k, x_px, y_px, v])
 
 			# Script TOP: segment mask (task=segment) or pass-through original (else)
 			masks = getattr(results[0], 'masks', None)
-			try:
-				task = str(self.ownerComp.par.Task.eval() or 'detect').strip().lower()
-			except Exception:
-				task = 'detect'
-			if task == 'segment':
+			if self._get_task() == 'segment':
 				try:
 					if masks is not None and masks.data is not None and masks.data.shape[0] > 0:
 						from ultralytics.utils.plotting import Colors
