@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import traceback
+import warnings
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -19,6 +20,17 @@ if str(STREAMDIFFUSION_SRC) not in sys.path:
     sys.path.insert(0, str(STREAMDIFFUSION_SRC))
 
 import gradio as gr
+
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"The 'theme' parameter in the Blocks constructor",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message=r"The 'css' parameter in the Blocks constructor",
+)
 
 DEFAULT_MODELS = [
     "stabilityai/sd-turbo",
@@ -163,7 +175,7 @@ def ui_to_config(
     cached_attn, cache_frames,
     denoise_steps,
 ):
-    base = "engines"
+    base = str(REPO_ROOT / "engines")
     slug = _model_slug(model_id)
     engine_dir = f"{base}/sd/{slug}"
 
@@ -404,6 +416,7 @@ def do_build_yolo(
         )
         log(f"✓ Engine: {engine_path}")
         log("Engines saved to engines/yolo/. Name: {model}_{h}x{w}_b{batch}[_fp16].engine")
+        log("✓ YOLO build and test inference complete.")
         return buf.getvalue() + "✓ Done."
     except Exception:
         return buf.getvalue() + "\n✗ " + traceback.format_exc()
@@ -721,7 +734,29 @@ def build_app():
                 )
 
             with gr.Tab("Settings"):
-                gr.Markdown("*(in development)*")
+                from tools.install_update import run_install_update
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        settings_btn = gr.Button("Install & Update", variant="primary", elem_classes=["act-btn"])
+                    with gr.Column(scale=1):
+                        settings_log = gr.Textbox(
+                            label="Log",
+                            lines=14,
+                            max_lines=30,
+                            interactive=False,
+                            elem_classes=["log"],
+                        )
+
+                def do_install_update(progress: gr.Progress = gr.Progress()) -> str:
+                    progress_cb = (lambda p, d: progress(p, desc=d)) if progress else None
+                    return run_install_update(REPO_ROOT, None, cuda_ver="cu121", progress_callback=progress_cb)
+
+                settings_btn.click(
+                    fn=do_install_update,
+                    inputs=[],
+                    outputs=[settings_log],
+                )
 
     return app
 
@@ -729,4 +764,4 @@ def build_app():
 demo = build_app()
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7861)
+    demo.launch(server_name="127.0.0.1", server_port=7861)

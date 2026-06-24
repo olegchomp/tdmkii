@@ -12,16 +12,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TD_DEPTH_ROOT = REPO_ROOT / "TDDepthAnything"
 
-# (model_version, model_size) -> (repo_id, filename)
-# V1: LiheYoung/Depth-Anything has checkpoints/ in repo
+# (model_version, model_size) -> (repo_id, filename, repo_type or None)
+# V1: LiheYoung/Depth-Anything is a Space; fallback to per-model repos (pytorch_model.bin)
 # V2: separate repo per size, file at root
 HF_CHECKPOINT_MAP = {
-    (1, "s"): ("LiheYoung/Depth-Anything", "checkpoints/depth_anything_vits14.pth"),
-    (1, "b"): ("LiheYoung/Depth-Anything", "checkpoints/depth_anything_vitb14.pth"),
-    (1, "l"): ("LiheYoung/Depth-Anything", "checkpoints/depth_anything_vitl14.pth"),
-    (2, "s"): ("depth-anything/Depth-Anything-V2-Small", "depth_anything_v2_vits.pth"),
-    (2, "b"): ("depth-anything/Depth-Anything-V2-Base", "depth_anything_v2_vitb.pth"),
-    (2, "l"): ("depth-anything/Depth-Anything-V2-Large", "depth_anything_v2_vitl.pth"),
+    (1, "s"): ("LiheYoung/depth_anything_vits14", "pytorch_model.bin", None),
+    (1, "b"): ("LiheYoung/depth_anything_vitb14", "pytorch_model.bin", None),
+    (1, "l"): ("LiheYoung/depth_anything_vitl14", "pytorch_model.bin", None),
+    (2, "s"): ("depth-anything/Depth-Anything-V2-Small", "depth_anything_v2_vits.pth", None),
+    (2, "b"): ("depth-anything/Depth-Anything-V2-Base", "depth_anything_v2_vitb.pth", None),
+    (2, "l"): ("depth-anything/Depth-Anything-V2-Large", "depth_anything_v2_vitl.pth", None),
     # (2, "g"): Giant "Coming soon" - add when available on HF
 }
 
@@ -62,11 +62,18 @@ def ensure_checkpoint(
         )
     if key not in HF_CHECKPOINT_MAP:
         raise ValueError(f"Unknown (version, size)={key}. V1: s,b,l. V2: s,b,l,g.")
-    repo_id, filename = HF_CHECKPOINT_MAP[key]
+    entry = HF_CHECKPOINT_MAP[key]
+    repo_id = entry[0]
+    filename = entry[1]
+    repo_type = entry[2] if len(entry) > 2 else None
 
     local_name = Path(filename).name
-    # User may have file at checkpoints_dir/name; HF download puts at checkpoints_dir/checkpoints/name for V1
-    for candidate in (checkpoints_dir / local_name, checkpoints_dir / filename):
+    # V1 from per-model repo: we want final path as depth_anything_vit*14.pth for engine naming
+    v1_pth_name = f"depth_anything_vit{model_size}14.pth" if key[0] == 1 else None
+    candidates = [checkpoints_dir / local_name, checkpoints_dir / filename]
+    if v1_pth_name:
+        candidates.insert(0, checkpoints_dir / v1_pth_name)
+    for candidate in candidates:
         if candidate.exists():
             if log_fn:
                 log_fn(f"Checkpoint found: {candidate}")
@@ -81,21 +88,29 @@ def ensure_checkpoint(
         raise ImportError("huggingface_hub is required for checkpoint download") from e
 
     try:
-        downloaded = hf_hub_download(
+        download_kw = dict(
             repo_id=repo_id,
             filename=filename,
             local_dir=checkpoints_dir,
-            local_dir_use_symlinks=False,
         )
+        if repo_type is not None:
+            download_kw["repo_type"] = repo_type
+        downloaded = hf_hub_download(**download_kw)
     except Exception as e:
         if log_fn:
             log_fn(f"Download failed: {e}")
         raise
 
-    # hf_hub_download with local_dir returns path like checkpoints_dir/checkpoints/file.pth
-    # or checkpoints_dir/file.pth depending on filename
     out_path = Path(downloaded)
-    if log_fn:
+    # V1: pytorch_model.bin -> copy to depth_anything_vit*14.pth for consistent engine naming
+    if v1_pth_name and out_path.name == "pytorch_model.bin":
+        import shutil
+        dest = checkpoints_dir / v1_pth_name
+        shutil.copy2(out_path, dest)
+        out_path = dest
+        if log_fn:
+            log_fn(f"Checkpoint saved: {out_path}")
+    elif log_fn:
         log_fn(f"Checkpoint saved: {out_path}")
     return out_path
 

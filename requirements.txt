@@ -22,6 +22,7 @@ omegaconf==2.3.0
 opencv-python==4.13.0.92
 ultralytics>=8.0.0
 lapx>=0.5.2  # Ultralytics track() (ByteTrack/BoT-SORT): provides `lap` module
+onnxslim>=0.1.71
 onnx==1.18.0
 onnxscript==0.6.2
 onnxruntime==1.23.2
@@ -39,6 +40,9 @@ tensorrt==10.12.0.36
 controlnet-aux==0.0.10
 
 # IP-Adapter: vendored in repo (diffusers_ipadapter/), added via sys.path; no pip install.
+
+# Settings / Install & Update tool (git reset via GitPython)
+GitPython>=3.1.0
 
 # Windows
 pywin32==306; sys_platform == 'win32'
